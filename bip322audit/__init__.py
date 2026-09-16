@@ -8,6 +8,6 @@ Everything that talks to a node lives here (through ``bitcoin-cli``); the
 * ``verify``    BIP-322 verdicts, stamp check, UTXO checks, totals, report
 """
 
-from bip322core._version import __version__
+from ._version import __version__
 
 TOOL = f"bip322-audit {__version__}"

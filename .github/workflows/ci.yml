@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bip322-core at the pinned tag (BIP322_CORE_DEPLOY_KEY: a read-only deploy key of that repository)
+        uses: actions/checkout@v4
+        with:
+          repository: embeddednation/bip322-core
+          ref: v0.5.0
+          path: bip322-core
+          ssh-key: ${{ secrets.BIP322_CORE_DEPLOY_KEY }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: setup (venv, hash-pinned dependencies, core from the checkout, editable install)
+        run: ./setup.sh --core ./bip322-core --no-tests
+      - name: versions
+        run: |
+          .venv/bin/python --version
+          .venv/bin/ruff --version
+          .venv/bin/bip322 --version
+          .venv/bin/python -c "import bip322audit; print(bip322audit.TOOL)"
+      - name: lint
+        run: .venv/bin/ruff check bip322audit tests
+      - name: tests (the regtest test skips without a Bitcoin Core binary)
+        run: .venv/bin/python -m pytest -q

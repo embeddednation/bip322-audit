@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The audit workflow end to end on a throwaway regtest node: fund the demo wallet,
 # snapshot, sign with the dummy cosigners, finalize, verify, spend a coin, verify again.
-# Needs the Core binary from refcheck/fetch.sh.  Run from the repository root.
+# Needs a Bitcoin Core binary: BITCOIN_CORE_DIR, or refcheck/fetch.sh run in the bip322-core checkout
+# this venv was set up from (setup.sh --core).  Run from the repository root.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-CORE=$(ls -d refcheck/bin/bitcoin-31.* | head -1)
+CORE=${BITCOIN_CORE_DIR:-$(.venv/bin/python -c 'import pathlib, refcheck; c = sorted((pathlib.Path(refcheck.__file__).resolve().parent / "bin").glob("bitcoin-31.*")); print(c[0] if c else "")')}
+[ -n "$CORE" ] || { echo "no Bitcoin Core binary: set BITCOIN_CORE_DIR or run refcheck/fetch.sh in the bip322-core checkout" >&2; exit 1; }
 DATADIR=$(mktemp -d)
 PORT=18773
 CLI="$CORE/bin/bitcoin-cli -regtest -datadir=$DATADIR -rpcport=$PORT -rpcuser=demo -rpcpassword=demo"

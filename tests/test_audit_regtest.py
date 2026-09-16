@@ -1,27 +1,52 @@
 """End to end against a real Bitcoin Core (regtest): fund the demo wallet, snapshot, sign, finalize, verify, spend, verify again.
 
-Skipped when the Core binary from refcheck/fetch.sh is not present.
+Skipped when no Bitcoin Core binary is found: set BITCOIN_CORE_DIR to a Core install (the directory holding bin/),
+or run refcheck/fetch.sh in a bip322-core checkout that is installed alongside.
 """
 
 import json
 from pathlib import Path
 
 import pytest
+from bip322core.dev.signing import sign_psbt
+from bip322core.dev.testing import ORIGIN_PATH
+from bip322core.psbt import parse_psbt
+from bip322core.wallet import Wallet
 from embit.networks import NETWORKS
 
 from bip322audit.audit import finalize_bundle, format_report, verify_proofs
 from bip322audit.rpc import BitcoinCli
 from bip322audit.snapshot import take_snapshot, write_bundle
 from bip322audit.stamp import parse_stamp
-from bip322core.dev.signing import sign_psbt
-from bip322core.dev.testing import ORIGIN_PATH
-from bip322core.psbt import parse_psbt
-from bip322core.wallet import Wallet
 
 ROOT = Path(__file__).resolve().parent.parent
-CORE_DIR = next(iter(sorted((ROOT / "refcheck" / "bin").glob("bitcoin-31.*"))), None)
 
-pytestmark = pytest.mark.skipif(CORE_DIR is None, reason="Bitcoin Core binary not downloaded (refcheck/fetch.sh)")
+
+def _core_dir() -> Path | None:
+    """A Bitcoin Core install: $BITCOIN_CORE_DIR, or refcheck's download next to the installed bip322-core."""
+    import os
+
+    if os.environ.get("BITCOIN_CORE_DIR"):
+        return Path(os.environ["BITCOIN_CORE_DIR"])
+    bases = [ROOT / "refcheck" / "bin"]
+    try:
+        import refcheck
+
+        bases.append(Path(refcheck.__file__).resolve().parent / "bin")
+    except ImportError:
+        pass
+    for base in bases:
+        found = sorted(base.glob("bitcoin-31.*"))
+        if found:
+            return found[0]
+    return None
+
+
+CORE_DIR = _core_dir()
+
+pytestmark = pytest.mark.skipif(
+    CORE_DIR is None, reason="no Bitcoin Core binary (set BITCOIN_CORE_DIR or run refcheck/fetch.sh in bip322-core)"
+)
 
 
 @pytest.fixture(scope="module")

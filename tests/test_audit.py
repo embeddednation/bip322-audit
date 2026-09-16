@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+from bip322core.dev.signing import sign_psbt
+from bip322core.psbt import parse_psbt
 
 from bip322audit.audit import AuditError, collect_psbts, collect_spends, finalize_bundle, format_report, load_proofs, verify_proofs
 from bip322audit.rpc import BitcoinCli, RpcError, to_sat
 from bip322audit.snapshot import coins_from_listunspent, coins_from_scantxoutset, take_snapshot, write_bundle
 from bip322audit.stamp import Stamp, check_stamp, compose_message, fetch_stamp, iso_utc, parse_stamp
-from bip322core.dev.signing import sign_psbt
-from bip322core.psbt import parse_psbt
 
 T0 = 1_700_000_000
 
@@ -408,15 +408,6 @@ def test_cli_end_to_end_with_fake_node(tmp_path, wallet, funded, signer_expressi
     assert json.loads(capsys.readouterr().out)["stamp"]["ok"] is None
     assert audit_cli.main(["help", "snapshot"]) == 0
     assert "Examples:" in capsys.readouterr().out
-
-
-def test_core_package_stays_pure():
-    """bip322core/ never imports the audit tool, subprocesses, sockets or HTTP."""
-    import re
-
-    forbidden = re.compile(r"^\s*(?:from|import)\s+(bip322audit|subprocess|socket|http|urllib|requests|refcheck)\b", re.M)
-    for path in Path("bip322core").rglob("*.py"):
-        assert not forbidden.search(path.read_text()), f"{path} imports chain-facing or audit code"
 
 
 def test_proofs_document_names_addresses_not_a_wallet(tmp_path, wallet, funded, signer_expressions):

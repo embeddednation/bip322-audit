@@ -21,10 +21,14 @@ so the user's node, chain and credentials are what is trusted and the tool
 holds none.
 
 * **Stamp.** `block: HEIGHT HASH TIME`, all three from the block `depth`
-  behind the tip (default 6). The hash is a *not before* bound; height and
-  header time make it readable and checkable with one `getblockheader`. It is
-  part of the signed message, never PSBT metadata. It is not replay
-  protection: a counterparty wanting freshness supplies a nonce.
+  behind the tip (default 6). The hash is a *not before* bound that anyone can
+  check on any node, now or years later; height and header time make it
+  readable and checkable with one `getblockheader`. It is part of the signed
+  message, never PSBT metadata. It is the freshness evidence an audit needs:
+  a proof stamped after the period's last block shows control after the
+  period's end, and it cannot pass for another year. No random nonce is
+  needed for that; an auditor may still ask for their engagement reference in
+  the text, which costs nothing and documents the request in their file.
 * **Snapshot semantics.** The stamp block is the snapshot block; only outputs
   confirmed at or before it are listed, so a bundle means "these coins, at
   that block". Coins come from `listunspent` (a Core wallet with the

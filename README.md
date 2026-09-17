@@ -110,9 +110,15 @@ proofs. Two ways to add to it:
 ```sh
 bip322-audit -w treasury snapshot --text "Proof of control {date}" --skip-proven ledger
 #   -> ledger/snapshot-<date>-<height>/ with only the outputs no earlier bundle proves (new change, new deposits)
-bip322-audit -w treasury snapshot --text "Audit 2026, Firm X ref 1234, {date}" -o ledger/audit-2026
-#   -> every output the wallet holds, for the auditor's own message
+bip322-audit -w treasury snapshot --text "Proof of control, audit FY2026, {date}" -o ledger/audit-2026
+#   -> every output the wallet holds, after the period's end, under a message that names the audit
 ```
+
+The block stamp in every message is the timestamp an audit needs: it shows
+the proof was made after that block, it can be checked on any node at any
+later date, and it cannot pass for another year. The auditor's request is
+therefore simply "a full bundle with a stamp after the period's last block";
+their engagement reference may go in the text if they want it in their file.
 
 A third way, for an address that holds nothing yet:
 

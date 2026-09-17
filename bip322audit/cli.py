@@ -14,6 +14,7 @@ from bip322core.wallet import Wallet, wallet_from_file
 
 from . import TOOL
 from .audit import AuditError, finalize_bundle, format_report, load_proofs, verify_proofs
+from .ledger import proven_outpoints
 from .rpc import BitcoinCli, RpcError, btc
 from .snapshot import DEFAULT_DEPTH, check_wallet_against_node, load_snapshot, take_snapshot, wallet_from_node, write_bundle
 from .stamp import fetch_stamp
@@ -70,8 +71,15 @@ def cmd_snapshot(args) -> int:
         max_index=args.max_index,
         utxo_mode=args.utxo,
         progress=lambda line: print(line, file=sys.stderr),
+        skip_outpoints=proven_outpoints(args.skip_proven) if args.skip_proven else None,
     )
-    directory = Path(args.output) if args.output else Path(f"snapshot-{snapshot.stamp.time[:10]}-{snapshot.stamp.height}")
+    name = f"snapshot-{snapshot.stamp.time[:10]}-{snapshot.stamp.height}"
+    if args.output:
+        directory = Path(args.output)
+    elif args.skip_proven and len(args.skip_proven) == 1 and Path(args.skip_proven[0]).is_dir():
+        directory = Path(args.skip_proven[0]) / name  # a new bundle joins the ledger it was checked against
+    else:
+        directory = Path(name)
     if directory.exists() and any(directory.iterdir()) and not args.force:
         raise CLIError(f"{directory} exists and is not empty (use --force to add to it)")
     write_bundle(directory, snapshot, psbts)
@@ -84,6 +92,7 @@ def cmd_snapshot(args) -> int:
                 "policy": snapshot.policy,
                 "addresses": len(snapshot.addresses),
                 "utxos": sum(len(a["utxos"]) for a in snapshot.addresses),
+                "skipped_proven": snapshot.skipped_proven,
                 "total_sat": snapshot.total_sat,
                 "total_btc": btc(snapshot.total_sat),
                 "message": snapshot.message,
@@ -217,6 +226,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-index", type=int, default=1000, help="derivation range to consider per branch")
     p.add_argument("--utxo", choices=["witness", "both"], default="witness", help="UTXO fields to embed in the PSBTs")
     p.add_argument("--allow-non-coldcard", action="store_true", help="do not insist on Coldcard's message rules")
+    p.add_argument(
+        "--skip-proven",
+        metavar="DIR",
+        action="append",
+        help="leave out outputs already listed in a proofs.json under DIR (a ledger of earlier bundles); may repeat. "
+        "With one DIR and no -o, the new bundle is written into it",
+    )
     p.add_argument("--output", "-o", metavar="DIR", help="bundle directory (default snapshot-<date>-<height>)")
     p.add_argument("--force", action="store_true", help="write into a non-empty directory")
     p.set_defaults(
@@ -225,6 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
             "-w treasury snapshot --text 'Annual audit {date}'",
             "--cli 'bitcoin-cli -signet' -w watch snapshot",
             "snapshot -d wallet.desc --source scantxoutset -o audit-2026",
+            "-w treasury snapshot --text 'Proof of control {date}' --skip-proven ledger   # only outputs no earlier bundle proves",
         ],
     )
 

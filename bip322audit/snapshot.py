@@ -209,6 +209,7 @@ class Snapshot:
     addresses: list[dict]
     source: str
     node_wallet: str | None = None  # the node wallet the coins came from; finalize asks it for the spend history
+    skipped_proven: int = 0  # outputs left out because earlier bundles prove them (--skip-proven)
 
     @property
     def total_sat(self) -> int:
@@ -225,6 +226,7 @@ class Snapshot:
             "wallet": {"descriptor": self.wallet_descriptor, "policy": self.policy},
             "source": self.source,
             "node_wallet": self.node_wallet,
+            "skipped_proven": self.skipped_proven,
             "addresses": self.addresses,
             "total_sat": self.total_sat,
             "total_btc": btc(self.total_sat),
@@ -242,10 +244,14 @@ def take_snapshot(
     max_index: int = 1000,
     utxo_mode: str = "witness",
     progress=None,
+    skip_outpoints: set[tuple[str, int]] | None = None,
 ) -> tuple[Snapshot, dict[str, object]]:
     """Build the snapshot and the unsigned PSBTs; returns (snapshot, {address: BIP322PSBT}).
 
     ``progress`` is an optional callable given a line of text before slow steps.
+    ``skip_outpoints`` leaves out outputs that earlier bundles already prove
+    (see :func:`bip322audit.ledger.proven_outpoints`); an address stays in
+    only for its outputs that are new.
     """
     chain = cli.chain()
     if wallet.network == "test" and chain in ("regtest", "signet"):
@@ -280,8 +286,18 @@ def take_snapshot(
         coins = coins_from_scantxoutset(cli, wallet, stamp, scan_range=max_index)
     else:
         raise ValueError("source must be auto, listunspent or scantxoutset")
+    skipped = 0
+    if skip_outpoints:
+        kept = []
+        for c in coins:
+            new = [u for u in c.utxos if (u.txid, u.vout) not in skip_outpoints]
+            skipped += len(c.utxos) - len(new)
+            if new:
+                kept.append(AddressCoins(c.derived, new))
+        coins = kept
     if not coins:
-        raise RpcError(f"no coins of this wallet confirmed at block {stamp.height} (source {source})")
+        what = "no coins of this wallet" if not skipped else f"no coins of this wallet beyond the {skipped} already proven"
+        raise RpcError(f"{what} confirmed at block {stamp.height} (source {source})")
     message_bytes = message.encode("utf-8")
     psbts: dict[str, object] = {}
     addresses: list[dict] = []
@@ -310,6 +326,7 @@ def take_snapshot(
         addresses=addresses,
         source=source,
         node_wallet=node_wallet,
+        skipped_proven=skipped,
     )
     return snapshot, psbts
 

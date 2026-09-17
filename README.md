@@ -93,6 +93,23 @@ spends make possible.
 `examples/audit_walkthrough.sh` runs the whole thing on a throwaway regtest
 node, including spending a coin after the snapshot.
 
+## Bundles over time: a ledger
+
+Keep every bundle in one directory tree and it becomes the wallet's ledger of
+proofs. Two ways to add to it:
+
+```sh
+bip322-audit -w treasury snapshot --text "Proof of control {date}" --skip-proven ledger
+#   -> ledger/snapshot-<date>-<height>/ with only the outputs no earlier bundle proves (new change, new deposits)
+bip322-audit -w treasury snapshot --text "Audit 2026, Firm X ref 1234, {date}" -o ledger/audit-2026
+#   -> every output the wallet holds, for the auditor's own message
+```
+
+Sign and `finalize` each as usual. `bip322-audit verify` checks one bundle;
+[bip322-reports](https://github.com/embeddednation/bip322-reports) reads the
+whole ledger to produce balance reports in which every output is backed by a
+verified proof.
+
 ## Layout
 
 ```

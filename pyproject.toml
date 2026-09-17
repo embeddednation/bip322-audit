@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bip322-audit"
-version = "0.5.0"
+version = "0.6.0"
 description = "Proof of control of a wallet's coins at a block: BIP-322 proofs per funded address plus the on-chain checks an auditor runs on their own node"
 requires-python = ">=3.10"
 license = "MIT"

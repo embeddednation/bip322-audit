@@ -454,3 +454,40 @@ def test_wallet_from_node(wallet, funded):
     check_wallet_against_node(cli, wallet)
     with pytest.raises(RpcError, match="pass --descriptor"):
         wallet_from_node(FakeCli(wallet, funded, rpcwallet=False))
+
+
+def test_snapshot_skips_outputs_earlier_bundles_prove(tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
+    """A ledger of bundles; a later snapshot lists only outputs no bundle proves yet, and joins the ledger."""
+    from bip322audit.ledger import find_proofs, proven_outpoints
+
+    ledger = tmp_path / "ledger"
+    first = _signed_bundle(ledger / "snapshot-1", wallet, funded, signer_expressions)  # helper appends /bundle
+    (first / "proofs.json").write_text(json.dumps(finalize_bundle(first)))
+    assert len(find_proofs([ledger])) == 1 and len(proven_outpoints([ledger])) == 3
+    assert find_proofs([first / "proofs.json"]) == find_proofs([first]) == find_proofs([ledger])
+
+    # a new output on a new address, and one more on an already proven address
+    a3 = wallet.derive(3).address
+    a0 = wallet.derive(0).address
+    later = {**funded, a3: [(7_000_000, 1010)], a0: funded[a0] + [(1_000_000, 1012)]}
+    cli = FakeCli(wallet, later, tip=1020)
+    snapshot, psbts = take_snapshot(cli, wallet, "Proof of control {date}", skip_outpoints=proven_outpoints([ledger]))
+    listed = {(a["address"], len(a["utxos"]), a["total_sat"]) for a in snapshot.addresses}
+    assert listed == {(a3, 1, 7_000_000), (a0, 1, 1_000_000)} and snapshot.skipped_proven == 3
+    assert set(psbts) == {a3, a0} and snapshot.to_dict()["skipped_proven"] == 3
+    # nothing new: a clear error
+    all_proven = proven_outpoints([ledger]) | {(u.txid, u.vout) for a in snapshot.addresses for u in []}
+    everything = {(u["txid"], u["vout"]) for a in snapshot.addresses for u in a["utxos"]} | all_proven
+    with pytest.raises(RpcError, match="beyond the 5 already proven"):
+        take_snapshot(cli, wallet, "x", skip_outpoints=everything)
+
+    # the CLI: --skip-proven LEDGER puts the new bundle into the ledger
+    import bip322audit.cli as audit_cli
+
+    monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
+    monkeypatch.chdir(tmp_path)
+    assert audit_cli.main(["-w", "watch", "snapshot", "--skip-proven", str(ledger)]) == 0
+    out, err = capsys.readouterr()
+    new_dir = Path(out.strip())
+    assert new_dir.parent == ledger and new_dir.name.startswith("snapshot-") and json.loads(err)["skipped_proven"] == 3
+    assert json.loads(err)["utxos"] == 2 and (new_dir / "to_sign").is_dir()

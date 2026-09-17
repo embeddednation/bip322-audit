@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 (2026-09-17)
+
+- Depends on bip322-core 0.6.2.
+
 ## 0.8.0 (2026-09-17)
 
 - `holdings ADDRESS... [--at HEIGHT|HASH]`: what addresses hold, from a

@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=${PYTHON:-python3}
-CORE_REF=${CORE_REF:-v0.8.0}
+CORE_REF=${CORE_REF:-v0.8.1}
 CORE_URL=${CORE_URL:-git+ssh://git@github.com/embeddednation/bip322-core.git}
 CORE_PATH=""
 RUN_TESTS=1

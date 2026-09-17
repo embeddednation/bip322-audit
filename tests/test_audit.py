@@ -527,27 +527,39 @@ def test_prove_addresses_that_hold_nothing_yet(tmp_path, wallet, funded, signer_
     assert proven_addresses([ledger]) == {change}
 
 
-def test_holdings_scans_addresses_and_counts_by_block(wallet, funded, monkeypatch, capsys):
-    """The on-chain step of a statement: what addresses hold, and how much of it was confirmed by a block."""
-    from bip322audit.holdings import format_holdings, holdings, holdings_command
+def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
+    """The on-chain step of a statement: by output a lookup, by address a scan; --at says which block the statement is about."""
+    from bip322audit.holdings import format_holdings, holdings, holdings_command, is_outpoint
 
     a0, a1 = wallet.derive(0).address, wallet.derive(1, 1).address
     cli = FakeCli(wallet, funded, tip=1000)
-    result = holdings(cli, [a0, a1, a0])
-    assert [r["address"] for r in result["addresses"]] == [a0, a1] and result["total_sat"] == 85_000_000 and result["at"] is None
-    assert [o["height"] for o in result["addresses"][0]["outputs"]] == [990, 993]
-    at = holdings(cli, [a0], at=991)
-    assert at["at"]["height"] == 991 and at["addresses"][0]["total_sat"] == 50_000_000 and at["addresses"][0]["later_sat"] == 25_000_000
-    text = format_holdings(at)
-    assert text.splitlines()[0] == f"{a0}  0.50000000 BTC  1 output confirmed by block 991 ({iso_utc(T0 + 991 * 600)})"
-    assert "not counted" in text and "coins spent since block 991 do not show" in text
-    assert holdings_command([a0], 991) == f"bip322 audit holdings {a0} --at 991"
+    outs = [f"{t}:{n}" for _, t, n, _, _ in cli._utxos()]  # noqa: SLF001
+    assert all(is_outpoint(o) for o in outs) and not is_outpoint(a0)
+    by_out = holdings(cli, outs, at=991)
+    assert (
+        by_out["mode"] == "outputs" and by_out["at"]["height"] == 991 and by_out["total_sat"] == 60_000_000
+    )  # 990 and 980 count, 993 does not
+    assert [o["counted"] for o in by_out["outputs"]] == [True, False, True] and by_out["outputs"][0]["address"] == a0
+    spent = holdings(FakeCli(wallet, funded, tip=1000, spent=[(outs[0].split(":")[0], 0)]), outs[:1])
+    assert spent["outputs"][0]["unspent"] is False and spent["total_sat"] == 0
+    text = format_holdings(by_out)
+    assert text.startswith(
+        f"output   {outs[0]}\naddress  {a0}\namount   0.50000000 BTC\nstatus   unspent at block 1000, confirmed in block 990"
+    )
+    assert "after block 991, not counted" in text and text.endswith("total    0.60000000 BTC held at block 991 in 2 output(s)")
+    by_addr = holdings(cli, [a0, a1, a0])
+    assert (
+        by_addr["mode"] == "addresses" and by_addr["total_sat"] == 85_000_000 and [o["address"] for o in by_addr["outputs"]] == [a0, a0, a1]
+    )
+    assert holdings_command(outs[:1], 991) == f"bip322 audit holdings {outs[0]} --at 991"
+    with pytest.raises(ValueError, match="not both"):
+        holdings(cli, [a0, outs[0]])
     with pytest.raises(RpcError):
         holdings(cli, [a0], at=fake_hash(2000))
     import bip322audit.cli as audit_cli
 
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
-    assert audit_cli.main(["holdings", a0, a1, "--at", "1000"]) == 0
+    assert audit_cli.main(["holdings", *outs, "--at", "1000"]) == 0
     out = capsys.readouterr().out
-    assert out.splitlines()[0].startswith(a0) and "total  0.85000000 BTC" in out
+    assert out.startswith("output   ") and out.strip().endswith("held at block 1000 in 3 output(s)")
     assert audit_cli.main(["holdings", a1, "--json"]) == 0 and json.loads(capsys.readouterr().out)["total_sat"] == 10_000_000

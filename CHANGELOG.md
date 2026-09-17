@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 (2026-09-17)
+
+- `holdings` takes outputs (`TXID:VOUT`, a direct lookup) as well as
+  addresses (a UTXO-set scan), and prints a labelled block per output.
+
 ## 0.8.1 (2026-09-17)
 
 - Depends on bip322-core 0.6.2.

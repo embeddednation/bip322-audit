@@ -1,11 +1,13 @@
-"""What addresses hold, from a UTXO-set scan: the on-chain step of verifying a statement.
+"""What outputs or addresses hold, from the node: the on-chain step of verifying a statement.
 
-``holdings`` answers "what do these addresses hold now, and how much of that
-was already there at block N": every unspent output paying them, from
-``scantxoutset``, optionally kept to those confirmed at or before a block.
-No wallet, no index.  Coins spent after block N cannot show here; the owner's
-records (``report.json`` of a statement, the spends a ``proofs.json``
-carries) name them, and ``verify`` checks those.
+By output (``TXID:VOUT``) the check is a direct lookup, ``gettxout``: instant,
+and it confirms the address and the amount the statement gives.  By address
+it is a scan of the whole UTXO set, ``scantxoutset``: minutes on mainnet,
+because Bitcoin Core keeps no index from address to outputs.  ``--at`` says
+which block the statement is about: an output confirmed at or before it and
+unspent now was unspent at that block.  Coins spent after that block cannot
+show here; the owner's records (``report.json`` of a statement, the spends a
+``proofs.json`` carries) name them, and ``verify`` checks those.
 """
 
 from __future__ import annotations
@@ -22,6 +24,11 @@ def _iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def is_outpoint(text: str) -> bool:
+    txid, sep, vout = text.partition(":")
+    return sep == ":" and len(txid) == 64 and all(c in "0123456789abcdefABCDEF" for c in txid) and vout.isdigit()
+
+
 def resolve_block(cli: BitcoinCli, at: str | int) -> dict:
     """A block by height or hash: ``{height, hash, time}``."""
     text = str(at).strip()
@@ -32,27 +39,81 @@ def resolve_block(cli: BitcoinCli, at: str | int) -> dict:
     return {"height": int(header["height"]), "hash": header.get("hash", block_hash), "time": _iso(header["time"])}
 
 
-def holdings(cli: BitcoinCli, addresses: list[str], *, at: str | int | None = None) -> dict:
-    """Unspent outputs of the addresses now, and their part confirmed at or before ``at`` when given."""
-    ordered = list(dict.fromkeys(a.strip() for a in addresses if a.strip()))
+def holdings(cli: BitcoinCli, targets: list[str], *, at: str | int | None = None) -> dict:
+    """Outputs (``TXID:VOUT``) or addresses: what each holds now, and whether that was already there at ``at``."""
+    ordered = list(dict.fromkeys(t.strip() for t in targets if t.strip()))
     if not ordered:
-        raise ValueError("no addresses")
+        raise ValueError("no outputs or addresses given")
+    modes = {is_outpoint(t) for t in ordered}
+    if len(modes) != 1:
+        raise ValueError("give outputs (TXID:VOUT) or addresses, not both")
     block = resolve_block(cli, at) if at is not None else None
-    result = cli.call("scantxoutset", "start", [{"desc": f"addr({a})"} for a in ordered])
-    if not result or not result.get("success"):
-        raise RpcError("scantxoutset did not succeed (another scan running?)")
-    scan_height, scan_hash = int(result["height"]), result["bestblock"]
+    tip_height, tip_hash = cli.tip()
     headers: dict[int, str] = {}
-    network = NETWORKS.get(
-        {"main": "main", "test": "test", "regtest": "regtest", "signet": "signet"}.get(cli.chain(), "main"), NETWORKS["main"]
-    )
 
     def when(height: int) -> str:
         if height not in headers:
             headers[height] = _iso(cli.block_header(cli.block_hash(height))["time"])
         return headers[height]
 
-    per: dict[str, list[dict]] = {a: [] for a in ordered}
+    outputs = _by_outpoint(cli, ordered, tip_height, when) if modes == {True} else _by_address(cli, ordered, when)
+    for o in outputs:
+        o["counted"] = bool(o["unspent"]) and (block is None or (o["height"] is not None and o["height"] <= block["height"]))
+    total = sum(o["amount_sat"] for o in outputs if o["counted"])
+    return {
+        "mode": "outputs" if modes == {True} else "addresses",
+        "tip": {"height": tip_height, "hash": tip_hash},
+        "at": block,
+        "outputs": outputs,
+        "total_sat": total,
+        "total_btc": btc(total),
+    }
+
+
+def _by_outpoint(cli: BitcoinCli, outpoints: list[str], tip_height: int, when) -> list[dict]:
+    rows = []
+    for text in outpoints:
+        txid, _, vout = text.partition(":")
+        txid, vout = txid.lower(), int(vout)
+        out = cli.call("gettxout", txid, vout, False)
+        if not out:
+            rows.append(
+                {
+                    "txid": txid,
+                    "vout": vout,
+                    "address": None,
+                    "amount_sat": 0,
+                    "amount_btc": None,
+                    "height": None,
+                    "time_utc": None,
+                    "unspent": False,
+                }
+            )
+            continue
+        height = tip_height - int(out["confirmations"]) + 1
+        rows.append(
+            {
+                "txid": txid,
+                "vout": vout,
+                "address": out.get("scriptPubKey", {}).get("address"),
+                "amount_sat": to_sat(out["value"]),
+                "amount_btc": btc(to_sat(out["value"])),
+                "height": height,
+                "time_utc": when(height),
+                "unspent": True,
+            }
+        )
+    return rows
+
+
+def _by_address(cli: BitcoinCli, addresses: list[str], when) -> list[dict]:
+    result = cli.call("scantxoutset", "start", [{"desc": f"addr({a})"} for a in addresses])
+    if not result or not result.get("success"):
+        raise RpcError("scantxoutset did not succeed (another scan running?)")
+    network = NETWORKS.get(
+        {"main": "main", "test": "test", "regtest": "regtest", "signet": "signet"}.get(cli.chain(), "main"), NETWORKS["main"]
+    )
+    rows = []
     for u in result.get("unspents", []):
         desc = str(u.get("desc", ""))
         address = desc[5 : desc.index(")")] if desc.startswith("addr(") and ")" in desc else None
@@ -61,65 +122,52 @@ def holdings(cli: BitcoinCli, addresses: list[str], *, at: str | int | None = No
                 address = Script(bytes.fromhex(u["scriptPubKey"])).address(network)
             except Exception:  # noqa: BLE001 - an output this tool cannot name is not one of the addresses asked for
                 continue
-        if address not in per:
+        if address not in addresses:
             continue
         height = int(u["height"])
-        per[address].append(
+        rows.append(
             {
                 "txid": u["txid"],
                 "vout": int(u["vout"]),
+                "address": address,
                 "amount_sat": to_sat(u["amount"]),
                 "amount_btc": btc(to_sat(u["amount"])),
                 "height": height,
                 "time_utc": when(height),
+                "unspent": True,
             }
         )
-    rows = []
-    for address in ordered:
-        outputs = sorted(per[address], key=lambda o: (o["height"], o["txid"], o["vout"]))
-        counted = [o for o in outputs if block is None or o["height"] <= block["height"]]
-        later = [o for o in outputs if block is not None and o["height"] > block["height"]]
-        total = sum(o["amount_sat"] for o in counted)
-        rows.append(
-            {
-                "address": address,
-                "total_sat": total,
-                "total_btc": btc(total),
-                "outputs": counted,
-                "later_outputs": later,
-                "later_sat": sum(o["amount_sat"] for o in later),
-            }
-        )
-    return {
-        "scan": {"height": scan_height, "hash": scan_hash},
-        "at": block,
-        "addresses": rows,
-        "total_sat": sum(r["total_sat"] for r in rows),
-        "total_btc": btc(sum(r["total_sat"] for r in rows)),
-    }
+    order = {a: i for i, a in enumerate(addresses)}
+    rows.sort(key=lambda o: (order[o["address"]], o["height"], o["txid"], o["vout"]))
+    return rows
 
 
 def format_holdings(result: dict) -> str:
-    """The text the command prints: one line per address, its outputs beneath, a total."""
+    """The text the command prints: a labelled block per output, then the total."""
     at = result["at"]
     lines = []
-    for r in result["addresses"]:
-        n = len(r["outputs"])
-        qualifier = f"confirmed by block {at['height']} ({at['time']})" if at else f"unspent at block {result['scan']['height']}"
-        lines.append(f"{r['address']}  {r['total_btc']} BTC  {n} output{'s' if n != 1 else ''} {qualifier}")
-        for o in r["outputs"]:
-            lines.append(f"  {o['txid']}:{o['vout']}  {o['amount_btc']}  block {o['height']} ({o['time_utc']})")
-        if r["later_outputs"]:
-            lines.append(
-                f"  + {btc(r['later_sat'])} BTC in {len(r['later_outputs'])} output(s) confirmed after block {at['height']}, not counted"
-            )
-    if len(result["addresses"]) > 1:
-        lines.append(f"total  {result['total_btc']} BTC")
-    if at:
-        lines.append(f"(unspent outputs as of block {result['scan']['height']}; coins spent since block {at['height']} do not show)")
+    for o in result["outputs"]:
+        if lines:
+            lines.append("")
+        lines.append(f"output   {o['txid']}:{o['vout']}")
+        if not o["unspent"]:
+            lines.append(f"status   not in the UTXO set at block {result['tip']['height']}: spent, or never existed")
+            continue
+        lines.append(f"address  {o['address']}")
+        lines.append(f"amount   {o['amount_btc']} BTC")
+        confirmed = f"confirmed in block {o['height']} ({o['time_utc']})"
+        if at is None:
+            lines.append(f"status   unspent at block {result['tip']['height']}, {confirmed}")
+        elif o["counted"]:
+            lines.append(f"status   unspent at block {result['tip']['height']}, {confirmed}: held at block {at['height']} ({at['time']})")
+        else:
+            lines.append(f"status   unspent at block {result['tip']['height']}, {confirmed}: after block {at['height']}, not counted")
+    lines.append("")
+    what = f"held at block {at['height']}" if at else f"unspent at block {result['tip']['height']}"
+    lines.append(f"total    {result['total_btc']} BTC {what} in {sum(1 for o in result['outputs'] if o['counted'])} output(s)")
     return "\n".join(lines)
 
 
-def holdings_command(addresses: list[str], at: str | int | None) -> str:
+def holdings_command(targets: list[str], at: str | int | None) -> str:
     """The command line a reader runs to get the same answer."""
-    return "bip322 audit holdings " + " ".join(addresses) + (f" --at {at}" if at is not None else "")
+    return "bip322 audit holdings " + " ".join(targets) + (f" --at {at}" if at is not None else "")

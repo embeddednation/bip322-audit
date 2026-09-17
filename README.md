@@ -20,7 +20,7 @@ Two roles:
 One line, into a fresh venv, with bip322-core pulled in at its pinned tag:
 
 ```sh
-python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.8.1"
+python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.9.0"
 export PATH="$HOME/.bip322/bin:$PATH"
 ```
 
@@ -105,13 +105,15 @@ node, including spending a coin after the snapshot.
 ## Checking holdings on chain
 
 ```sh
-bip322-audit holdings bc1q... bc1q... --at 912345
+bip322-audit holdings 7a1b...:0 3c9d...:1 --at 912345    # by output: a direct lookup, instant
+bip322-audit holdings bc1q... --at 912345                 # by address: a UTXO-set scan, minutes on mainnet
 ```
 
-lists every unspent output paying the addresses, from a UTXO-set scan, and
-with `--at` counts only those confirmed at or before that block: how a reader
-of a statement checks its closing holdings. Coins spent since cannot show;
-the owner's records name them and `verify` checks those.
+For each output: its address, amount, the block it was confirmed in, and
+whether it is unspent; with `--at`, whether it was held at that block (an
+output confirmed at or before the block and unspent now was). This is how a
+reader of a statement checks its closing holdings. Coins spent since cannot
+show; the owner's records name them and `verify` checks those.
 
 ## Bundles over time: a ledger
 

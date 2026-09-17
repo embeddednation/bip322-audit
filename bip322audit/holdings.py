@@ -82,6 +82,7 @@ def _by_outpoint(cli: BitcoinCli, outpoints: list[str], tip_height: int, when) -
                     "txid": txid,
                     "vout": vout,
                     "address": None,
+                    "script": None,
                     "amount_sat": 0,
                     "amount_btc": None,
                     "height": None,
@@ -96,6 +97,7 @@ def _by_outpoint(cli: BitcoinCli, outpoints: list[str], tip_height: int, when) -
                 "txid": txid,
                 "vout": vout,
                 "address": out.get("scriptPubKey", {}).get("address"),
+                "script": out.get("scriptPubKey", {}).get("hex"),
                 "amount_sat": to_sat(out["value"]),
                 "amount_btc": btc(to_sat(out["value"])),
                 "height": height,
@@ -130,6 +132,7 @@ def _by_address(cli: BitcoinCli, addresses: list[str], when) -> list[dict]:
                 "txid": u["txid"],
                 "vout": int(u["vout"]),
                 "address": address,
+                "script": u.get("scriptPubKey"),
                 "amount_sat": to_sat(u["amount"]),
                 "amount_btc": btc(to_sat(u["amount"])),
                 "height": height,
@@ -154,7 +157,9 @@ def format_holdings(result: dict) -> str:
         if not o["unspent"]:
             lines.append(f"status     not in the UTXO set at block {tip}: spent, or never existed")
             continue
-        lines.append(f"address    {o['address']}")
+        lines.append(f"locked to  {o['address']}")
+        if o.get("script"):
+            lines.append(f"script     {o['script']}")
         lines.append(f"amount     {o['amount_btc']} BTC")
         lines.append(f"confirmed  block {o['height']}, {o['time_utc']}")
         if at is None:

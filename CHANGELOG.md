@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3 (2026-09-17)
+
+- Depends on bip322-core 0.7.0.
+
 ## 0.9.2 (2026-09-17)
 
 - `holdings` prints the script each output is locked to ("locked to" the address, and the script bytes): the link between an output and the address whose control a proof shows.

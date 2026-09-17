@@ -543,10 +543,9 @@ def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
     spent = holdings(FakeCli(wallet, funded, tip=1000, spent=[(outs[0].split(":")[0], 0)]), outs[:1])
     assert spent["outputs"][0]["unspent"] is False and spent["total_sat"] == 0
     text = format_holdings(by_out)
-    assert text.startswith(
-        f"output   {outs[0]}\naddress  {a0}\namount   0.50000000 BTC\nstatus   unspent at block 1000, confirmed in block 990"
-    )
-    assert "after block 991, not counted" in text and text.endswith("total    0.60000000 BTC held at block 991 in 2 output(s)")
+    assert text.startswith(f"output     {outs[0]}\naddress    {a0}\namount     0.50000000 BTC\nconfirmed  block 990, ")
+    assert "held at block 991 (" in text and "after block 991; not counted" in text
+    assert text.endswith("total      0.60000000 BTC held at block 991, 2 output(s)")
     by_addr = holdings(cli, [a0, a1, a0])
     assert (
         by_addr["mode"] == "addresses" and by_addr["total_sat"] == 85_000_000 and [o["address"] for o in by_addr["outputs"]] == [a0, a0, a1]

@@ -17,6 +17,15 @@ Two roles:
 
 ## Install
 
+One line, into a fresh venv, with bip322-core pulled in at its pinned tag:
+
+```sh
+python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.7.0"
+export PATH="$HOME/.bip322/bin:$PATH"
+```
+
+For a reproducible, hash-pinned install (what an auditor should do), clone and use the setup script:
+
 ```sh
 git clone git@github.com:embeddednation/bip322-audit.git && cd bip322-audit
 ./setup.sh                          # venv, hash-pinned dependencies, bip322-core at the pinned tag, tests
@@ -104,6 +113,18 @@ bip322-audit -w treasury snapshot --text "Proof of control {date}" --skip-proven
 bip322-audit -w treasury snapshot --text "Audit 2026, Firm X ref 1234, {date}" -o ledger/audit-2026
 #   -> every output the wallet holds, for the auditor's own message
 ```
+
+A third way, for an address that holds nothing yet:
+
+```sh
+bip322-audit -w treasury prove bc1q...change... --text "Proof of control {date}" --ledger ledger
+#   -> a bundle for exactly that address; refused if it is not the wallet's
+```
+
+That is the check to run on the change address of a spend before broadcasting
+it: sign, `finalize`, and a valid proof means the quorum controls where the
+change goes. A proof is about an address, so every output paid to it later
+is covered too, and `--skip-proven` skips addresses proven that way.
 
 Sign and `finalize` each as usual. `bip322-audit verify` checks one bundle;
 [bip322-reports](https://github.com/embeddednation/bip322-reports) reads the

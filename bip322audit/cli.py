@@ -14,7 +14,7 @@ from bip322core.wallet import Wallet, wallet_from_file
 
 from . import TOOL
 from .audit import AuditError, finalize_bundle, format_report, load_proofs, verify_proofs
-from .ledger import proven_outpoints
+from .ledger import proven_addresses
 from .rpc import BitcoinCli, RpcError, btc
 from .snapshot import DEFAULT_DEPTH, check_wallet_against_node, load_snapshot, take_snapshot, wallet_from_node, write_bundle
 from .stamp import fetch_stamp
@@ -71,11 +71,14 @@ def cmd_snapshot(args) -> int:
         max_index=args.max_index,
         utxo_mode=args.utxo,
         progress=lambda line: print(line, file=sys.stderr),
-        skip_outpoints=proven_outpoints(args.skip_proven) if args.skip_proven else None,
+        skip_addresses=proven_addresses(args.skip_proven) if args.skip_proven else None,
+        addresses=getattr(args, "addresses", None) or None,
     )
     name = f"snapshot-{snapshot.stamp.time[:10]}-{snapshot.stamp.height}"
     if args.output:
         directory = Path(args.output)
+    elif getattr(args, "ledger", None):
+        directory = Path(args.ledger) / name
     elif args.skip_proven and len(args.skip_proven) == 1 and Path(args.skip_proven[0]).is_dir():
         directory = Path(args.skip_proven[0]) / name  # a new bundle joins the ledger it was checked against
     else:
@@ -230,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-proven",
         metavar="DIR",
         action="append",
-        help="leave out outputs already listed in a proofs.json under DIR (a ledger of earlier bundles); may repeat. "
+        help="leave out addresses that a proofs.json under DIR (a ledger of earlier bundles) already proves; may repeat. "
         "With one DIR and no -o, the new bundle is written into it",
     )
     p.add_argument("--output", "-o", metavar="DIR", help="bundle directory (default snapshot-<date>-<height>)")
@@ -241,8 +244,38 @@ def build_parser() -> argparse.ArgumentParser:
             "-w treasury snapshot --text 'Annual audit {date}'",
             "--cli 'bitcoin-cli -signet' -w watch snapshot",
             "snapshot -d wallet.desc --source scantxoutset -o audit-2026",
-            "-w treasury snapshot --text 'Proof of control {date}' --skip-proven ledger   # only outputs no earlier bundle proves",
+            "-w treasury snapshot --text 'Proof of control {date}' --skip-proven ledger   # only addresses no earlier bundle proves",
         ],
+    )
+
+    p = sub.add_parser(
+        "prove",
+        help="a bundle for given addresses of the wallet, whether or not they hold coins yet",
+        description=(
+            "Like snapshot, for exactly the addresses given: a stamp, the message, one PSBT per address, and the coins each holds "
+            "at the stamp block if any. For a change address before the spend is broadcast, or a deposit address before the "
+            "deposit: the proof shows the wallet controls the address, and later outputs to it are covered by it. "
+            "An address that is not the wallet's (within --max-index) is refused, which is the point of checking before sending."
+        ),
+    )
+    _add_node_args(p)
+    p.add_argument("addresses", metavar="ADDRESS", nargs="+", help="addresses of the wallet")
+    p.add_argument("--descriptor", "-d", metavar="FILE|DESC", help="use this descriptor instead of the node wallet's own")
+    p.add_argument("--text", default=DEFAULT_TEMPLATE, help="message template (default: '%(default)s')")
+    p.add_argument(
+        "--depth", type=int, default=DEFAULT_DEPTH, help=f"stamp block is this many blocks behind the tip (default {DEFAULT_DEPTH})"
+    )
+    p.add_argument("--max-index", type=int, default=1000, help="derivation range to search per branch")
+    p.add_argument("--utxo", choices=["witness", "both"], default="witness", help="UTXO fields to embed in the PSBTs")
+    p.add_argument("--allow-non-coldcard", action="store_true", help="do not insist on Coldcard's message rules")
+    p.add_argument("--ledger", metavar="DIR", help="write the bundle into this ledger directory (as snapshot-<date>-<height>)")
+    p.add_argument("--output", "-o", metavar="DIR", help="bundle directory (default snapshot-<date>-<height>, under --ledger if given)")
+    p.add_argument("--force", action="store_true", help="write into a non-empty directory")
+    p.set_defaults(
+        func=cmd_snapshot,
+        source="auto",
+        skip_proven=None,
+        examples=["-w treasury prove bc1q... --text 'Proof of control {date}' --ledger ledger"],
     )
 
     p = sub.add_parser(
@@ -301,7 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
         ],
     )
 
-    add_help_command("bip322-audit", sub, {"Workflow": ["stamp", "snapshot", "finalize", "verify", "help"]})
+    add_help_command("bip322-audit", sub, {"Workflow": ["stamp", "snapshot", "prove", "finalize", "verify", "help"]})
     return parser
 
 

@@ -209,7 +209,7 @@ class Snapshot:
     addresses: list[dict]
     source: str
     node_wallet: str | None = None  # the node wallet the coins came from; finalize asks it for the spend history
-    skipped_proven: int = 0  # outputs left out because earlier bundles prove them (--skip-proven)
+    skipped_proven: int = 0  # outputs left out because an earlier bundle proves their address (--skip-proven)
 
     @property
     def total_sat(self) -> int:
@@ -244,14 +244,17 @@ def take_snapshot(
     max_index: int = 1000,
     utxo_mode: str = "witness",
     progress=None,
-    skip_outpoints: set[tuple[str, int]] | None = None,
+    skip_addresses: set[str] | None = None,
+    addresses: list[str] | None = None,
 ) -> tuple[Snapshot, dict[str, object]]:
     """Build the snapshot and the unsigned PSBTs; returns (snapshot, {address: BIP322PSBT}).
 
     ``progress`` is an optional callable given a line of text before slow steps.
-    ``skip_outpoints`` leaves out outputs that earlier bundles already prove
-    (see :func:`bip322audit.ledger.proven_outpoints`); an address stays in
-    only for its outputs that are new.
+    ``skip_addresses`` leaves out addresses that earlier bundles already prove
+    (see :func:`bip322audit.ledger.proven_addresses`).  ``addresses`` proves
+    exactly these addresses of the wallet, whether or not they hold coins yet
+    (a change address before the spend is broadcast, a deposit address before
+    the deposit); their coins confirmed at the stamp, if any, are listed.
     """
     chain = cli.chain()
     if wallet.network == "test" and chain in ("regtest", "signet"):
@@ -286,17 +289,24 @@ def take_snapshot(
         coins = coins_from_scantxoutset(cli, wallet, stamp, scan_range=max_index)
     else:
         raise ValueError("source must be auto, listunspent or scantxoutset")
+    if addresses:
+        by_address = {c.derived.address: c for c in coins}
+        chosen = []
+        for address in addresses:
+            derived = by_address[address].derived if address in by_address else wallet.find_address(address, max_index=max_index)
+            if derived is None:
+                raise ValueError(f"{address} is not an address of this wallet (within index {max_index})")
+            if derived.address not in [c.derived.address for c in chosen]:
+                chosen.append(by_address.get(derived.address) or AddressCoins(derived, []))
+        coins = chosen
+        source = f"{source}, addresses given"
     skipped = 0
-    if skip_outpoints:
-        kept = []
-        for c in coins:
-            new = [u for u in c.utxos if (u.txid, u.vout) not in skip_outpoints]
-            skipped += len(c.utxos) - len(new)
-            if new:
-                kept.append(AddressCoins(c.derived, new))
+    if skip_addresses:
+        kept = [c for c in coins if c.derived.address not in skip_addresses]
+        skipped = sum(len(c.utxos) for c in coins) - sum(len(c.utxos) for c in kept)
         coins = kept
     if not coins:
-        what = "no coins of this wallet" if not skipped else f"no coins of this wallet beyond the {skipped} already proven"
+        what = "no coins of this wallet" if not skipped else f"no coins of this wallet beyond the {skipped} on already proven addresses"
         raise RpcError(f"{what} confirmed at block {stamp.height} (source {source})")
     message_bytes = message.encode("utf-8")
     psbts: dict[str, object] = {}

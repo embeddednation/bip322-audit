@@ -60,3 +60,20 @@ def proven_outpoints(roots: Iterable[Path | str]) -> set[Outpoint]:
     for _, document in find_proofs(roots):
         out |= outpoints_in(document)
     return out
+
+
+def addresses_in(document: dict) -> set[str]:
+    return {p["address"] for p in document.get("proofs", [])}
+
+
+def proven_addresses(roots: Iterable[Path | str]) -> set[str]:
+    """Every address a proofs document under the roots carries a proof for.
+
+    A BIP-322 proof is about an address: whoever made it controls every output
+    paid to that address, before or after the proof.  So an address proven
+    once needs no new proof for later outputs.
+    """
+    out: set[str] = set()
+    for _, document in find_proofs(roots):
+        out |= addresses_in(document)
+    return out

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0 (2026-09-17)
+
+- `prove ADDRESS...`: a bundle for given addresses of the wallet whether or
+  not they hold coins yet, for a change address before the spend is
+  broadcast or a deposit address before the deposit. An address that is not
+  the wallet's is refused.
+- `snapshot --skip-proven` now skips by address, not by output: a BIP-322
+  proof is about an address, so an address proven once covers every output
+  paid to it, before or after the proof. `bip322audit.ledger.proven_addresses`.
+- Packaging: `bip322-core` is a direct git dependency at a pinned tag, so
+  one `pip install` of a git URL installs the stack; the `kernel` extra
+  chains to the core's.
+
 ## 0.6.0 (2026-09-17)
 
 - `snapshot --skip-proven DIR`: leave out outputs that a `proofs.json` under

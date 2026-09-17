@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 (2026-09-17)
+
+- Depends on bip322-core 0.6.0: `bip322 audit ...` reaches this package through the core's git-style dispatch.
+
 ## 0.7.0 (2026-09-17)
 
 - `prove ADDRESS...`: a bundle for given addresses of the wallet whether or

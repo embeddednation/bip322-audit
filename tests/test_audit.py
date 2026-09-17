@@ -561,5 +561,5 @@ def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
     assert audit_cli.main(["holdings", *outs, "--at", "1000"]) == 0
     out = capsys.readouterr().out
-    assert out.startswith("output   ") and out.strip().endswith("held at block 1000 in 3 output(s)")
+    assert out.startswith("output     ") and out.strip().endswith("held at block 1000, 3 output(s)")
     assert audit_cli.main(["holdings", a1, "--json"]) == 0 and json.loads(capsys.readouterr().out)["total_sat"] == 10_000_000

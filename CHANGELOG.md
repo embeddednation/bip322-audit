@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.9.0 (2026-09-17)
+## 0.9.1 (2026-09-17)
 
 - `holdings` takes outputs (`TXID:VOUT`, a direct lookup) as well as
-  addresses (a UTXO-set scan), and prints a labelled block per output.
+  addresses (a UTXO-set scan), and prints a labelled block per output with
+  lines short enough to quote in a statement (0.9.0 had longer lines).
 
 ## 0.8.1 (2026-09-17)
 

@@ -143,28 +143,29 @@ def _by_address(cli: BitcoinCli, addresses: list[str], when) -> list[dict]:
 
 
 def format_holdings(result: dict) -> str:
-    """The text the command prints: a labelled block per output, then the total."""
+    """The text the command prints: a labelled block per output (lines short enough to print), then the total."""
     at = result["at"]
+    tip = result["tip"]["height"]
     lines = []
     for o in result["outputs"]:
         if lines:
             lines.append("")
-        lines.append(f"output   {o['txid']}:{o['vout']}")
+        lines.append(f"output     {o['txid']}:{o['vout']}")
         if not o["unspent"]:
-            lines.append(f"status   not in the UTXO set at block {result['tip']['height']}: spent, or never existed")
+            lines.append(f"status     not in the UTXO set at block {tip}: spent, or never existed")
             continue
-        lines.append(f"address  {o['address']}")
-        lines.append(f"amount   {o['amount_btc']} BTC")
-        confirmed = f"confirmed in block {o['height']} ({o['time_utc']})"
+        lines.append(f"address    {o['address']}")
+        lines.append(f"amount     {o['amount_btc']} BTC")
+        lines.append(f"confirmed  block {o['height']}, {o['time_utc']}")
         if at is None:
-            lines.append(f"status   unspent at block {result['tip']['height']}, {confirmed}")
+            lines.append(f"status     unspent at block {tip}")
         elif o["counted"]:
-            lines.append(f"status   unspent at block {result['tip']['height']}, {confirmed}: held at block {at['height']} ({at['time']})")
+            lines.append(f"status     held at block {at['height']} ({at['time']}); unspent at block {tip}")
         else:
-            lines.append(f"status   unspent at block {result['tip']['height']}, {confirmed}: after block {at['height']}, not counted")
+            lines.append(f"status     confirmed after block {at['height']}; not counted")
     lines.append("")
-    what = f"held at block {at['height']}" if at else f"unspent at block {result['tip']['height']}"
-    lines.append(f"total    {result['total_btc']} BTC {what} in {sum(1 for o in result['outputs'] if o['counted'])} output(s)")
+    what = f"held at block {at['height']}" if at else f"unspent at block {tip}"
+    lines.append(f"total      {result['total_btc']} BTC {what}, {sum(1 for o in result['outputs'] if o['counted'])} output(s)")
     return "\n".join(lines)
 
 

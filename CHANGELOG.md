@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0 (2026-09-17)
+
+- `holdings ADDRESS... [--at HEIGHT|HASH]`: what addresses hold, from a
+  UTXO-set scan, and with `--at` the part confirmed by a block. The on-chain
+  step a reader of a statement runs; no wallet, no index. Text or `--json`.
+
 ## 0.7.1 (2026-09-17)
 
 - Depends on bip322-core 0.6.0: `bip322 audit ...` reaches this package through the core's git-style dispatch.

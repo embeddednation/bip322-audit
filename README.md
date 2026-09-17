@@ -20,7 +20,7 @@ Two roles:
 One line, into a fresh venv, with bip322-core pulled in at its pinned tag:
 
 ```sh
-python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.7.1"
+python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.8.0"
 export PATH="$HOME/.bip322/bin:$PATH"
 ```
 
@@ -101,6 +101,17 @@ spends make possible.
 
 `examples/audit_walkthrough.sh` runs the whole thing on a throwaway regtest
 node, including spending a coin after the snapshot.
+
+## Checking holdings on chain
+
+```sh
+bip322-audit holdings bc1q... bc1q... --at 912345
+```
+
+lists every unspent output paying the addresses, from a UTXO-set scan, and
+with `--at` counts only those confirmed at or before that block: how a reader
+of a statement checks its closing holdings. Coins spent since cannot show;
+the owner's records name them and `verify` checks those.
 
 ## Bundles over time: a ledger
 

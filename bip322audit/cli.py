@@ -14,6 +14,7 @@ from bip322core.wallet import Wallet, wallet_from_file
 
 from . import TOOL
 from .audit import AuditError, finalize_bundle, format_report, load_proofs, verify_proofs
+from .holdings import format_holdings, holdings
 from .ledger import proven_addresses
 from .rpc import BitcoinCli, RpcError, btc
 from .snapshot import DEFAULT_DEPTH, check_wallet_against_node, load_snapshot, take_snapshot, wallet_from_node, write_bundle
@@ -106,6 +107,12 @@ def cmd_snapshot(args) -> int:
         file=sys.stderr,
     )
     print(str(directory))
+    return 0
+
+
+def cmd_holdings(args) -> int:
+    result = holdings(_cli(args), args.addresses, at=args.at)
+    emit(json.dumps(result, indent=2) if args.json else format_holdings(result), args.output)
     return 0
 
 
@@ -249,6 +256,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p = sub.add_parser(
+        "holdings",
+        help="what addresses hold, from a UTXO-set scan; with --at, the part confirmed by a block",
+        description=(
+            "Every unspent output paying the addresses, from scantxoutset (minutes on mainnet; no wallet, no index). "
+            "With --at HEIGHT|HASH only outputs confirmed at or before that block are counted, which is how a reader checks "
+            "a statement's holdings at its closing block. Coins spent since cannot show here; the owner's records name them."
+        ),
+    )
+    _add_node_args(p, wallet=False)
+    p.add_argument("addresses", metavar="ADDRESS", nargs="+")
+    p.add_argument("--at", metavar="HEIGHT|HASH", help="count only outputs confirmed at or before this block")
+    p.add_argument("--json", action="store_true", help="print JSON instead of text")
+    p.add_argument("--output", "-o", metavar="FILE", help="write here instead of stdout")
+    p.set_defaults(func=cmd_holdings, examples=["holdings bc1q... --at 912345", "holdings bc1q... bc1q... --json"])
+
+    p = sub.add_parser(
         "prove",
         help="a bundle for given addresses of the wallet, whether or not they hold coins yet",
         description=(
@@ -334,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
         ],
     )
 
-    add_help_command("bip322-audit", sub, {"Workflow": ["stamp", "snapshot", "prove", "finalize", "verify", "help"]})
+    add_help_command("bip322-audit", sub, {"Workflow": ["stamp", "snapshot", "prove", "finalize", "verify", "holdings", "help"]})
     return parser
 
 

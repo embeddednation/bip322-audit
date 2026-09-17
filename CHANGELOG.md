@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4 (2026-09-17)
+
+- Depends on bip322-core 0.8.0.
+
 ## 0.9.3 (2026-09-17)
 
 - Depends on bip322-core 0.7.0.

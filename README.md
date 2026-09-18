@@ -109,10 +109,11 @@ bip322-audit holdings 7a1b...:0 3c9d...:1 --at 912345    # by output: a direct l
 bip322-audit holdings bc1q... --at 912345                 # by address: a UTXO-set scan, minutes on mainnet
 ```
 
-For each output: its address, amount, the block it was confirmed in, and
-whether it is unspent; with `--at`, whether it was held at that block (an
-output confirmed at or before the block and unspent now was). This is how a
-reader of a statement checks its closing holdings. Coins spent since cannot
+For each output: the scriptPubKey it is locked to, its amount, and whether
+it is unspent; with `--at`, whether it was held at that block (an output
+confirmed at or before the block and unspent now was; `gettxout` only finds
+unspent outputs). The JSON adds the address and the confirmation block and
+time. This is how a reader of a statement checks its closing holdings. Coins spent since cannot
 show; the owner's records name them and `verify` checks those.
 
 ## Bundles over time: a ledger

@@ -146,11 +146,14 @@ def _by_address(cli: BitcoinCli, addresses: list[str], when) -> list[dict]:
 
 
 def format_holdings(result: dict) -> str:
-    """The text the command prints: what each output is locked to, its amount, when it was confirmed, and its status.
+    """The text the command prints: what each output is locked to, its amount, and its status.
 
-    For a single output the outpoint is not repeated (it is the argument) and
-    there is no total; for several, each block starts with its outpoint and a
-    total follows.
+    Three lines per output, for readers of a statement.  "held at block N"
+    means confirmed at or before N and unspent now (``gettxout`` only finds
+    unspent outputs), so nothing more needs saying about the tip; the
+    confirmation block and time are in the JSON.  For a single output the
+    outpoint is not repeated (it is the argument) and there is no total; for
+    several, each block starts with its outpoint and a total follows.
     """
     at = result["at"]
     tip = result["tip"]["height"]
@@ -166,12 +169,10 @@ def format_holdings(result: dict) -> str:
             continue
         lines.append(f"locked to  {o['script'] or o['address']}")
         lines.append(f"amount     {o['amount_btc']} BTC")
-        lines.append(f"confirmed  block {o['height']}, {o['time_utc']}")
         if at is None:
             lines.append(f"status     unspent at block {tip}")
         elif o["counted"]:
-            later = f", still unspent at block {tip}" if tip != at["height"] else ""
-            lines.append(f"status     held at block {at['height']} ({at['time']}){later}")
+            lines.append(f"status     held at block {at['height']} ({at['time']})")
         else:
             lines.append(f"status     confirmed after block {at['height']}, not counted")
     if not single:

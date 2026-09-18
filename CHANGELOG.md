@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3 (2026-09-18)
+
+- `holdings` text: three lines per output (locked to, amount, status); the
+  confirmation line and "still unspent at block N" are gone, the JSON keeps
+  the height and time.
+
 ## 0.10.2 (2026-09-18)
 
 - `holdings` status does not repeat the block when `--at` is the tip.

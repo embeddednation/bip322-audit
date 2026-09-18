@@ -546,9 +546,8 @@ def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
     assert (
         text.startswith(f"output     {outs[0]}\nlocked to  0020") and "address" not in text
     )  # the scriptPubKey is the lock; the address is in the JSON
-    assert "held at block 991 (" in text and "), still unspent at block 1000" in text and "after block 991, not counted" in text
-    at_tip = format_holdings(holdings(cli, outs[:1], at=1000))
-    assert "still unspent" not in at_tip and "held at block 1000 (" in at_tip  # no repetition when the block is the tip
+    assert "held at block 991 (" in text and "after block 991, not counted" in text
+    assert "confirmed  " not in text and "still unspent" not in text  # three lines per output; the rest is in the JSON
     assert text.endswith("total      0.60000000 BTC held at block 991, 2 output(s)")
     one = format_holdings(holdings(cli, outs[:1], at=991))
     assert one.startswith("locked to  0020") and "output" not in one and "total" not in one  # a single output: no repetition

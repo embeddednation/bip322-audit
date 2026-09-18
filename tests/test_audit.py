@@ -7,6 +7,7 @@ import pytest
 from bip322core.dev.signing import sign_psbt
 from bip322core.psbt import parse_psbt
 
+from bip322audit._version import __version__
 from bip322audit.audit import AuditError, collect_psbts, collect_spends, finalize_bundle, format_report, load_proofs, verify_proofs
 from bip322audit.rpc import BitcoinCli, RpcError, to_sat
 from bip322audit.snapshot import coins_from_listunspent, coins_from_scantxoutset, take_snapshot, write_bundle
@@ -50,6 +51,8 @@ class FakeCli(BitcoinCli):
         self.calls.append((method, *params))
         if method == "getblockchaininfo":
             return {"chain": self.chain_name, "blocks": self.tip_height, "bestblockhash": fake_hash(self.tip_height)}
+        if method == "getnetworkinfo":
+            return {"subversion": "/Satoshi:31.1.0/"}
         if method == "getwalletinfo":
             if "-rpcwallet=watch" not in self.argv:
                 raise RpcError("Wallet file not specified (must request wallet RPC through /wallet/<filename> uri-path)")
@@ -548,7 +551,8 @@ def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
     )  # the scriptPubKey is the lock; the address is in the JSON
     assert "held at block 991 (" in text and "after block 991, not counted" in text
     assert "confirmed  " not in text and "still unspent" not in text  # three lines per output; the rest is in the JSON
-    assert text.endswith("total      0.60000000 BTC held at block 991, 2 output(s)")
+    assert text.endswith(f"node       Bitcoin Core 31.1.0 (bip322-audit {__version__})") and by_out["node"] == "Bitcoin Core 31.1.0"
+    assert "total      0.60000000 BTC held at block 991, 2 output(s)\nnode " in text
     one = format_holdings(holdings(cli, outs[:1], at=991))
     assert one.startswith("locked to  0020") and "output" not in one and "total" not in one  # a single output: no repetition
     by_addr = holdings(cli, [a0, a1, a0])
@@ -565,5 +569,7 @@ def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
     assert audit_cli.main(["holdings", *outs, "--at", "1000"]) == 0
     out = capsys.readouterr().out
-    assert out.startswith("output     ") and out.strip().endswith("held at block 1000, 3 output(s)")
+    assert out.startswith("output     ") and out.strip().endswith(
+        "held at block 1000, 3 output(s)\nnode       Bitcoin Core 31.1.0 (bip322-audit " + __version__ + ")"
+    )
     assert audit_cli.main(["holdings", a1, "--json"]) == 0 and json.loads(capsys.readouterr().out)["total_sat"] == 10_000_000

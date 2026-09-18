@@ -67,6 +67,20 @@ class BitcoinCli:
         info = self.call("getblockchaininfo")
         return int(info["blocks"]), info["bestblockhash"]
 
+    def node_name(self) -> str:
+        """The node's software and version in words, from its ``subversion`` ("/Satoshi:31.1.0/" is Bitcoin Core 31.1.0)."""
+        try:
+            raw = str(self.call("getnetworkinfo")["subversion"])
+        except (RpcError, KeyError, TypeError):
+            return "unknown node"
+        parts = dict(p.split(":", 1) for p in raw.strip("/").split("/") if ":" in p)
+        core = parts.get("Satoshi")
+        if core and "Knots" in parts:
+            return f"Bitcoin Knots {core} ({parts['Knots']})"
+        if core:
+            return f"Bitcoin Core {core}"
+        return raw.strip("/") or "unknown node"
+
     def block_header(self, block_hash: str) -> dict:
         return self.call("getblockheader", block_hash)
 

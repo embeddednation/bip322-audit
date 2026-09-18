@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from embit.networks import NETWORKS
 from embit.script import Script
 
+from ._version import __version__
 from .rpc import BitcoinCli, RpcError, btc, to_sat
 
 
@@ -61,6 +62,8 @@ def holdings(cli: BitcoinCli, targets: list[str], *, at: str | int | None = None
         o["counted"] = bool(o["unspent"]) and (block is None or (o["height"] is not None and o["height"] <= block["height"]))
     total = sum(o["amount_sat"] for o in outputs if o["counted"])
     return {
+        "tool": f"bip322-audit {__version__}",
+        "node": cli.node_name(),
         "mode": "outputs" if modes == {True} else "addresses",
         "tip": {"height": tip_height, "hash": tip_hash},
         "at": block,
@@ -146,14 +149,16 @@ def _by_address(cli: BitcoinCli, addresses: list[str], when) -> list[dict]:
 
 
 def format_holdings(result: dict) -> str:
-    """The text the command prints: what each output is locked to, its amount, and its status.
+    """The text the command prints: what each output is locked to, its amount, and its status; last, the node that answered.
 
     Three lines per output, for readers of a statement.  "held at block N"
     means confirmed at or before N and unspent now (``gettxout`` only finds
     unspent outputs), so nothing more needs saying about the tip; the
     confirmation block and time are in the JSON.  For a single output the
     outpoint is not repeated (it is the argument) and there is no total; for
-    several, each block starts with its outpoint and a total follows.
+    several, each block starts with its outpoint and a total follows.  The
+    last line names the node and this tool, so a quoted output says by what
+    it was produced.
     """
     at = result["at"]
     tip = result["tip"]["height"]
@@ -179,6 +184,8 @@ def format_holdings(result: dict) -> str:
         what = f"held at block {at['height']}" if at else f"unspent at block {tip}"
         lines.append("")
         lines.append(f"total      {result['total_btc']} BTC {what}, {sum(1 for o in result['outputs'] if o['counted'])} output(s)")
+    if result.get("node") or result.get("tool"):
+        lines.append(f"node       {result.get('node') or 'unknown node'} ({result.get('tool') or 'bip322-audit'})")
     return "\n".join(lines)
 
 

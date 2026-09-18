@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.4 (2026-09-18)
+
+- `holdings` ends with the node that answered and this tool
+  (`node       Bitcoin Core 31.1.0 (bip322-audit 0.10.4)`); the JSON has
+  `node` and `tool`. `BitcoinCli.node_name()` reads `getnetworkinfo`.
+- Depends on bip322-core 0.9.2.
+
 ## 0.10.3 (2026-09-18)
 
 - `holdings` text: three lines per output (locked to, amount, status); the

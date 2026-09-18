@@ -170,7 +170,8 @@ def format_holdings(result: dict) -> str:
         if at is None:
             lines.append(f"status     unspent at block {tip}")
         elif o["counted"]:
-            lines.append(f"status     held at block {at['height']} ({at['time']}), still unspent at block {tip}")
+            later = f", still unspent at block {tip}" if tip != at["height"] else ""
+            lines.append(f"status     held at block {at['height']} ({at['time']}){later}")
         else:
             lines.append(f"status     confirmed after block {at['height']}, not counted")
     if not single:

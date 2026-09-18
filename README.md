@@ -20,7 +20,7 @@ Two roles:
 One line, into a fresh venv, with bip322-core pulled in at its pinned tag:
 
 ```sh
-python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.10.1"
+python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel] @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.10.2"
 export PATH="$HOME/.bip322/bin:$PATH"
 ```
 

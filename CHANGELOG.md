@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.2 (2026-09-18)
+
+- `holdings` status does not repeat the block when `--at` is the tip.
+
 ## 0.10.1 (2026-09-18)
 
 - `holdings` text is terse: locked to, amount, confirmed, status; the outpoint and the total only when several outputs were asked for; the address stays in the JSON.

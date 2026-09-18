@@ -157,9 +157,11 @@ def format_holdings(result: dict) -> str:
         if not o["unspent"]:
             lines.append(f"status     not in the UTXO set at block {tip}: spent, or never existed")
             continue
-        lines.append(f"locked to  {o['address']}")
         if o.get("script"):
-            lines.append(f"script     {o['script']}")
+            lines.append(f"locked to  {o['script']}  (the scriptPubKey)")
+            lines.append(f"address    {o['address']}  (the scriptPubKey, encoded)")
+        else:
+            lines.append(f"locked to  {o['address']}")
         lines.append(f"amount     {o['amount_btc']} BTC")
         lines.append(f"confirmed  block {o['height']}, {o['time_utc']}")
         if at is None:

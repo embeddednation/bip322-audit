@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0 (2026-09-18)
+
+- `holdings` prints what an output is locked to as the scriptPubKey bytes first, with the address as their encoding.
+- Depends on bip322-core 0.9.0.
+
 ## 0.9.5 (2026-09-17)
 
 - Depends on bip322-core 0.8.1.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1 (2026-09-18)
+
+- `holdings` text is terse: locked to, amount, confirmed, status; the outpoint and the total only when several outputs were asked for; the address stays in the JSON.
+- Depends on bip322-core 0.9.1.
+
 ## 0.10.0 (2026-09-18)
 
 - `holdings` prints what an output is locked to as the scriptPubKey bytes first, with the address as their encoding.

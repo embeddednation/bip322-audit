@@ -39,6 +39,8 @@ instead, which is the development setup and also the auditor's: clone both
 repositories at the tags the owner names, check the commit hashes out of
 band, and run `verify`.
 
+The whole yearly flow across the three packages is in bip322-reports' [handbook](https://github.com/embeddednation/bip322-reports/blob/main/docs/handbook.md).
+
 ## Workflow
 
 For "we controlled these coins as of block N", repeatable whenever coins move:

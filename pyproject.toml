@@ -9,11 +9,25 @@ description = "Proof of control of a wallet's coins at a block: BIP-322 proofs p
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
+readme = "README.md"
+authors = [{ name = "Embedded Nation AB" }]
+keywords = ["bitcoin", "bip322", "proof of control", "audit", "multisig", "psbt"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
 # Until the packages are on PyPI, dependencies are direct git references at pinned tags, so that
 # `pip install "bip322-audit @ git+ssh://git@github.com/embeddednation/bip322-audit.git@v0.7.0"` brings the core along.
 dependencies = [
     "bip322-core @ git+ssh://git@github.com/embeddednation/bip322-core.git@v0.9.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/embeddednation/bip322-audit"
+Changelog = "https://github.com/embeddednation/bip322-audit/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 kernel = ["bip322-core[kernel] @ git+ssh://git@github.com/embeddednation/bip322-core.git@v0.9.2"]

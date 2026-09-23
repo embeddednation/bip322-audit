@@ -28,4 +28,8 @@ def test_git_pins_agree():
         var = name.split("-")[1].upper() + "_REF"
         m = re.search(var + r"=\$\{" + var + r":-(v[^}]+)\}", setup)
         assert m and m.group(1) == next(iter(tags)), f"setup.sh {var} does not match the pyproject.toml pin {sorted(tags)}"
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    for name, tags in pins.items():
+        for m in re.finditer(r"repository: embeddednation/" + name + r"\n\s+ref: (v[^\s]+)", ci):
+            assert m.group(1) == next(iter(tags)), f"ci.yml checks out {name} at {m.group(1)}, pyproject.toml pins {sorted(tags)}"
     assert data["project"]["version"] == (ROOT / "bip322audit" / "_version.py").read_text().split('"')[1]

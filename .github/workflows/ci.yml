@@ -11,11 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: bip322-core at the pinned tag (BIP322_CORE_DEPLOY_KEY: a read-only deploy key of that repository)
+      - name: "bip322-core at the pinned tag (BIP322_CORE_DEPLOY_KEY: a read-only deploy key, needed only while that repository is private)"
         uses: actions/checkout@v4
         with:
           repository: embeddednation/bip322-core
-          ref: v0.9.1
+          ref: v0.9.2
           path: bip322-core
           ssh-key: ${{ secrets.BIP322_CORE_DEPLOY_KEY }}
       - uses: actions/setup-python@v5

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.5 (2026-09-23)
+
+- CI: a step name with a colon in it broke the workflow file; the core is
+  checked out at the pinned tag, which the pin test now checks too.
+
 ## 0.10.4 (2026-09-18)
 
 - `holdings` ends with the node that answered and this tool

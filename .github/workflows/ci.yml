@@ -8,17 +8,17 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: "bip322-core at the pinned tag (BIP322_CORE_DEPLOY_KEY: a read-only deploy key, needed only while that repository is private)"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: embeddednation/bip322-core
           ref: v0.9.2
           path: bip322-core
           ssh-key: ${{ secrets.BIP322_CORE_DEPLOY_KEY }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: setup (venv, hash-pinned dependencies, core from the checkout, editable install)

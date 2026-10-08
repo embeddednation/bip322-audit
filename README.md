@@ -53,11 +53,11 @@ The whole yearly flow across the three packages is in bip322-report's [handbook]
 For "we controlled these coins as of block N", repeatable whenever coins move:
 
 ```sh
-bip322-audit -w treasury snapshot --text "Annual audit {date}"      # the node wallet's own descriptor
+bip322 audit -w treasury snapshot --text "Annual audit {date}"      # the node wallet's own descriptor
 #   -> snapshot-2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
 #   sign every PSBT on the cosigners' devices, put the results into snapshot-.../signed/
-bip322-audit finalize snapshot-2026-09-14-912345           # -> proofs.json (hand this to the auditor)
-bip322-audit verify snapshot-2026-09-14-912345 --report audit-report.json
+bip322 audit finalize snapshot-2026-09-14-912345           # -> proofs.json (hand this to the auditor)
+bip322 audit verify snapshot-2026-09-14-912345 --report audit-report.json
 ```
 
 `finalize` also asks the node wallet the coins came from (recorded in
@@ -176,8 +176,8 @@ exists and is not empty.
 ## Checking holdings on chain
 
 ```sh
-bip322-audit holdings 7a1b...:0 3c9d...:1 --at 912345    # by output: a direct lookup, instant
-bip322-audit holdings bc1q... --at 912345                 # by address: a UTXO-set scan, minutes on mainnet
+bip322 audit holdings 7a1b...:0 3c9d...:1 --at 912345    # by output: a direct lookup, instant
+bip322 audit holdings bc1q... --at 912345                 # by address: a UTXO-set scan, minutes on mainnet
 ```
 
 For each output: the scriptPubKey it is locked to, its amount, and whether
@@ -194,9 +194,9 @@ Keep every bundle in one directory tree and it becomes the wallet's ledger of
 proofs. Two ways to add to it:
 
 ```sh
-bip322-audit -w treasury snapshot --text "Proof of control {date}" --skip-proven ledger
+bip322 audit -w treasury snapshot --text "Proof of control {date}" --skip-proven ledger
 #   -> ledger/snapshot-<date>-<height>/ with only the outputs no earlier bundle proves (new change, new deposits)
-bip322-audit -w treasury snapshot --text "Proof of control, audit FY2026, {date}" -o ledger/audit-2026
+bip322 audit -w treasury snapshot --text "Proof of control, audit FY2026, {date}" -o ledger/audit-2026
 #   -> every output the wallet holds, after the period's end, under a message that names the audit
 ```
 
@@ -209,7 +209,7 @@ their engagement reference may go in the text if they want it in their file.
 A third way, for an address that holds nothing yet:
 
 ```sh
-bip322-audit -w treasury prove bc1q...change... --text "Proof of control {date}" --ledger ledger
+bip322 audit -w treasury prove bc1q...change... --text "Proof of control {date}" --ledger ledger
 #   -> a bundle for exactly that address; refused if it is not the wallet's
 ```
 
@@ -221,7 +221,7 @@ is covered too, and `--skip-proven` skips addresses proven that way.
 `--skip-proven DIR` must exist, and a `proofs.json` under it that cannot be
 read (a truncated file) is named in a warning, since it proves nothing.
 
-Sign and `finalize` each as usual. `bip322-audit verify` checks one bundle;
+Sign and `finalize` each as usual. `bip322 audit verify` checks one bundle;
 [bip322-report](https://github.com/embeddednation/bip322-report) reads the
 whole ledger to produce balance reports in which every output is backed by a
 verified proof.

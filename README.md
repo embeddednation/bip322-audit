@@ -28,6 +28,10 @@ python3 -m venv ~/.bip322 && ~/.bip322/bin/pip install "bip322-audit[kernel]"
 export PATH="$HOME/.bip322/bin:$PATH"
 ```
 
+Python 3.11 or newer (on Ubuntu 22.04: `apt install python3.12 python3.12-venv`
+from the deadsnakes PPA, then `python3.12 -m venv ~/.bip322`); leave out
+`[kernel]` on anything but CPython 3.12 / Linux x86_64.
+
 For a reproducible, hash-pinned install (what an auditor should do), clone and use the setup script:
 
 ```sh

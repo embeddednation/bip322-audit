@@ -1,6 +1,6 @@
 """The data directory: one tree for every wallet, in which the tools name everything.
 
-``~/bip322`` unless ``BIP322_DIR`` says otherwise::
+``~/bip322``, unless ``--dir`` or ``BIP322_DIR`` says otherwise (or ``~/bip322`` is a symlink)::
 
     ~/bip322/
       config.toml                           the one configuration file
@@ -45,6 +45,7 @@ __all__ = [
     "snapshot_directory",
     "snapshots_dir",
     "statements_dir",
+    "use_data_dir",
     "wallet_dir",
     "wallets",
 ]
@@ -57,9 +58,18 @@ class ConfigError(Exception):
     """``config.toml`` cannot be read or says something the tools cannot use; or a name that fits no directory."""
 
 
+_chosen: Path | None = None  # --dir
+
+
 def data_dir() -> Path:
-    """``$BIP322_DIR``, else ``~/bip322``; it need not exist yet."""
-    return Path(os.environ.get("BIP322_DIR") or DEFAULT_DIR).expanduser()
+    """``--dir``, else ``$BIP322_DIR``, else ``~/bip322``; it need not exist yet."""
+    return _chosen or Path(os.environ.get("BIP322_DIR") or DEFAULT_DIR).expanduser()
+
+
+def use_data_dir(path: str | os.PathLike | None) -> None:
+    """``--dir`` for the rest of the process; None leaves it to the environment."""
+    global _chosen
+    _chosen = Path(path).expanduser() if path is not None else None
 
 
 class Config:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.1 (2026-10-12)
+
+- `--dir DIR` puts the tree elsewhere than `~/bip322` (as `BIP322_DIR` does).
+- `-w`, `--dir`, `--cli` and `--timeout` go before or after any command;
+  `verify -w NAME` and `stamp -w NAME` were refused.
+
 ## 0.13.0 (2026-10-12)
 
 One tree, named by the tools: `~/bip322/<wallet>/snapshots/<date>-<height>/`

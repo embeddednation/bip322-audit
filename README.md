@@ -197,8 +197,9 @@ address may be given in upper case.
 
 ## Where everything lives
 
-One directory, `~/bip322` (`BIP322_DIR` moves it): one `config.toml`, and one
-directory per wallet, in which the tools name everything.
+One directory, `~/bip322`: one `config.toml`, and one directory per wallet,
+in which the tools name everything. To keep it elsewhere, give `--dir DIR`,
+set `BIP322_DIR`, or make `~/bip322` a symlink.
 
 ```
 ~/bip322/

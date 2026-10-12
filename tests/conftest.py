@@ -3,6 +3,8 @@ from bip322core.dev.testing import key_expression, master_key
 from bip322core.wallet import MultisigWallet
 from embit.bip32 import HDKey
 
+from bip322audit import datadir
+
 
 @pytest.fixture(scope="session")
 def masters() -> list[HDKey]:
@@ -30,4 +32,5 @@ def signer_expressions(masters) -> list[str]:
 def data_directory(tmp_path, monkeypatch):
     """Every test gets its own ~/bip322, so nothing reads or writes the developer's."""
     monkeypatch.setenv("BIP322_DIR", str(tmp_path / "bip322"))
+    monkeypatch.setattr(datadir, "_chosen", None)  # no --dir left over from a test before
     return tmp_path / "bip322"

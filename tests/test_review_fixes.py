@@ -450,6 +450,22 @@ def test_cli_quoting_and_timeout(wallet, funded, monkeypatch, capsys):
         slow.call("1")
 
 
+def test_wallet_and_dir_go_before_or_after_any_command(tmp_path, wallet, funded, monkeypatch, capsys):
+    """-w and --dir are taken on either side of every command, and --dir beats BIP322_DIR."""
+    fake = FakeCli(wallet, funded, tip=1000)
+    monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
+    elsewhere = tmp_path / "elsewhere"
+    assert audit_cli.main(["snapshot", "--max-index", "20", "-w", "watch", "--dir", str(elsewhere)]) == 0
+    assert Path(capsys.readouterr().out.strip()).parent == elsewhere / "watch" / "snapshots"
+    assert audit_cli.main(["--dir", str(elsewhere), "verify", "-w", "watch"]) == 2
+    assert f"no finalized snapshot under {elsewhere / 'watch' / 'snapshots'}" in capsys.readouterr().err
+    assert audit_cli.main(["verify", "-w", "watch"]) == 2 and not snapshots_dir("watch").exists()  # BIP322_DIR: nothing there
+    assert f"no finalized snapshot under {snapshots_dir('watch')}" in capsys.readouterr().err
+    assert audit_cli.main(["stamp", "-w", "watch"]) == 0
+    for argv in (["holdings", "-w", "x", "bc1q"], ["finalize", "-w", "x", "--dir", "d"], ["prove", "--dir", "d", "-w", "x", "bc1q"]):
+        audit_cli.build_parser().parse_args(argv)  # accepted after the command
+
+
 def test_testnet4_and_network_errors(wallet, funded):
     """Finding 19: testnet4 is a test network; no error points at an option that does not exist."""
     from bip322core.wallet import Wallet

@@ -5,8 +5,8 @@ run (bad input, a file or the node not reachable).  ``verify`` alone also has 1,
 result is FAILED, and 3, the result is INCOMPLETE: nothing failed, but the node did
 not show every listed output held at the stamp block.
 
-Everything is written under ``~/bip322/<wallet>/snapshots/`` (``BIP322_DIR`` moves
-the tree); ``-w`` names the wallet, else ``config.toml`` does, else the node's one
+Everything is written under ``~/bip322/<wallet>/snapshots/`` (``--dir`` or ``BIP322_DIR``
+moves the tree); ``-w`` names the wallet, else ``config.toml`` does, else the node's one
 loaded wallet is it.  ``-o`` writes elsewhere.
 """
 
@@ -35,6 +35,7 @@ from .datadir import (
     snapshot_directory,
     snapshot_name,
     snapshots_dir,
+    use_data_dir,
     wallet_of_directory,
 )
 from .holdings import format_holdings, holdings
@@ -83,11 +84,12 @@ def _cli(args, config: Config, *, node_wallet: str | None = None, wallet: str | 
     return cli
 
 
-def _add_node_args(p: argparse.ArgumentParser, wallet: bool = True) -> None:
+def _add_node_args(p: argparse.ArgumentParser) -> None:
+    """The global options again, so that they may follow the command as well as precede it."""
     p.add_argument("--cli", dest="cli_sub", metavar="CMD", help="how to reach the node (may also be given before the command)")
     p.add_argument("--timeout", dest="timeout_sub", type=float, metavar="SECONDS", help="give up on a node call after this long")
-    if wallet:
-        p.add_argument("--wallet", "-w", dest="wallet_sub", metavar="NAME", help="the wallet (may also be given before the command)")
+    p.add_argument("--wallet", "-w", dest="wallet_sub", metavar="NAME", help="the wallet (may also be given before the command)")
+    p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the data directory (may also be given before the command)")
 
 
 def _wallet(args, cli: BitcoinCli, notes: list[str]) -> Wallet:
@@ -313,11 +315,11 @@ def _recorded_earlier(out: Path) -> dict | None:
 def cmd_verify(args) -> int:
     config = Config.load()
     if args.snapshot and Path(args.snapshot).is_file():
-        path = Path(args.snapshot)
+        path, name = Path(args.snapshot), _wallet_name(args, config)
     else:
-        path, _ = _snapshot_to_work_on(args, config, finalized=True)
+        path, name = _snapshot_to_work_on(args, config, finalized=True)
     document = load_proofs(path)
-    cli = None if args.offline else _cli(args, config)  # the auditor's node has no wallet: none is named
+    cli = None if args.offline else _cli(args, config, wallet=name)  # no node wallet is named: the auditor's node has none
     engines = args.engines.split(",") if args.engines else None
     report = verify_proofs(document, cli, engines=engines, txindex=args.txindex)
     if args.report:
@@ -350,6 +352,12 @@ def _add_global_args(parser: argparse.ArgumentParser) -> None:
         metavar="NAME",
         help=f"the wallet: its directory {data_dir()}/NAME, and the node wallet of that name (or the one its [wallets.NAME] table "
         "names as node). Default: wallet in config.toml, else the node's one loaded wallet. May also follow the command.",
+    )
+    parser.add_argument(
+        "--dir",
+        default=None,
+        metavar="DIR",
+        help=f"the data directory (default {data_dir()}: BIP322_DIR in the environment, else ~/bip322). May also follow the command.",
     )
 
 
@@ -384,7 +392,7 @@ def _add_stamp_parser(sub) -> None:
         description="Print `block: HEIGHT HASH TIME` for the block DEPTH blocks behind the node's tip. No wallet is needed.",
     )
     p.add_argument("--depth", type=int, default=DEFAULT_DEPTH, help=f"blocks behind the tip (default {DEFAULT_DEPTH})")
-    _add_node_args(p, wallet=False)
+    _add_node_args(p)
     p.set_defaults(func=cmd_stamp, examples=["stamp", "--cli 'bitcoin-cli -signet' stamp --depth 3"])
 
 
@@ -446,7 +454,7 @@ def _add_holdings_parser(sub) -> None:
             "records name them."
         ),
     )
-    _add_node_args(p, wallet=False)
+    _add_node_args(p)
     p.add_argument("targets", metavar="TXID:VOUT|ADDRESS", nargs="+")
     p.add_argument("--at", metavar="HEIGHT|HASH", help="the block the statement is about")
     p.add_argument("--json", action="store_true", help="print JSON instead of text")
@@ -530,7 +538,7 @@ def _add_verify_parser(sub) -> None:
         nargs="?",
         help="a proofs file, a snapshot directory, or a snapshot's name under the wallet's snapshots/; default: the wallet's newest finalized",
     )
-    _add_node_args(p, wallet=False)
+    _add_node_args(p)
     p.add_argument("--offline", action="store_true", help="verify the signatures only (no node)")
     p.add_argument(
         "--txindex",
@@ -556,7 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bip322-audit",
         description=f"Proof of control of a wallet's coins at a point in time: BIP-322 proofs plus on-chain checks through bitcoin-cli ({SPEC}). "
-        f"Snapshots and their proofs files live under {data_dir()}/<wallet>/snapshots/ (BIP322_DIR moves the tree); "
+        f"Snapshots and their proofs files live under {data_dir()}/<wallet>/snapshots/ (--dir or BIP322_DIR moves the tree); "
         "config.toml there holds the defaults.",
         epilog=EXIT_HELP + " verify: 0 the result is OK, 1 FAILED, 3 INCOMPLETE (nothing failed, but some listed output is not shown "
         "held at the stamp block).",
@@ -572,6 +580,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    use_data_dir(_opt(args, "dir"))
     try:
         return args.func(args)
     except (CLIError, ConfigError, BIP322Error, RpcError, AuditError, ValueError) as exc:

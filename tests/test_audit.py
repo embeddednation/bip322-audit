@@ -8,9 +8,10 @@ from bip322core.dev.signing import sign_psbt
 from bip322core.psbt import parse_psbt
 
 from bip322audit._version import __version__
-from bip322audit.audit import AuditError, collect_psbts, collect_spends, finalize_bundle, format_report, load_proofs, verify_proofs
+from bip322audit.audit import AuditError, collect_psbts, collect_spends, finalize_snapshot, format_report, load_proofs, verify_proofs
+from bip322audit.datadir import proofs_file_in, snapshots_dir
 from bip322audit.rpc import BitcoinCli, RpcError, to_sat
-from bip322audit.snapshot import coins_from_listunspent, coins_from_scantxoutset, take_snapshot, write_bundle
+from bip322audit.snapshot import coins_from_listunspent, coins_from_scantxoutset, take_snapshot, write_snapshot
 from bip322audit.stamp import Stamp, check_stamp, compose_message, fetch_stamp, iso_utc, parse_stamp
 
 T0 = 1_700_000_000
@@ -250,11 +251,11 @@ def test_take_snapshot_checks_chain_and_message_rules(wallet, funded):
         take_snapshot(FakeCli(wallet, {}), wallet, "x")
 
 
-def _signed_bundle(tmp_path, wallet, funded, signer_expressions, cli=None) -> Path:
+def _signed_snapshot(tmp_path, wallet, funded, signer_expressions, cli=None) -> Path:
     cli = cli or FakeCli(wallet, funded)
     snapshot, psbts = take_snapshot(cli, wallet, "Annual audit {date}")
-    directory = tmp_path / "bundle"
-    written = write_bundle(directory, snapshot, psbts)
+    directory = tmp_path / "snapshot"
+    written = write_snapshot(directory, snapshot, psbts)
     assert (directory / "snapshot.json").exists() and (directory / "message.txt").read_bytes() == snapshot.message.encode()
     assert len([p for p in written if p.suffix == ".psbt"]) == 2 and (directory / "signed").is_dir() and (directory / "to_sign").is_dir()
     files = {a["address"]: a["file"] for a in snapshot.addresses}
@@ -270,10 +271,10 @@ def _signed_bundle(tmp_path, wallet, funded, signer_expressions, cli=None) -> Pa
 
 
 def test_finalize_and_verify_with_fake_node(tmp_path, wallet, funded, signer_expressions):
-    directory = _signed_bundle(tmp_path, wallet, funded, signer_expressions)
+    directory = _signed_snapshot(tmp_path, wallet, funded, signer_expressions)
     groups = collect_psbts(directory)
     assert len(groups) == 2 and all(len(g) == 3 for g in groups.values())  # unsigned + 2 signed each
-    document = finalize_bundle(directory)
+    document = finalize_snapshot(directory)
     assert len(document["proofs"]) == 2 and all(p["signature"].startswith("smp") for p in document["proofs"])
     (directory / "proofs.json").write_text(json.dumps(document))
     assert load_proofs(directory)["message_hex"] == document["message_hex"]
@@ -319,7 +320,7 @@ def test_finalize_and_verify_with_fake_node(tmp_path, wallet, funded, signer_exp
         "blockhash": fake_hash(1150),
         "height": 1150,
     }
-    refreshed = finalize_bundle(directory, cli=cli)  # re-run on the owner's node: the spend goes into proofs.json
+    refreshed = finalize_snapshot(directory, cli=cli)  # re-run on the owner's node: the spend goes into proofs.json
     assert refreshed["spends"] == spends_doc["spends"] and refreshed["spends_utc"] and refreshed["proofs"] == document["proofs"]
     report = verify_proofs(refreshed, cli, engines=["btclib"])
     assert report["spends_recorded_utc"] == refreshed["spends_utc"]
@@ -377,12 +378,12 @@ def test_finalize_and_verify_with_fake_node(tmp_path, wallet, funded, signer_exp
 
 
 def test_finalize_reports_missing_signatures(tmp_path, wallet, funded, signer_expressions):
-    directory = _signed_bundle(tmp_path, wallet, funded, signer_expressions)
+    directory = _signed_snapshot(tmp_path, wallet, funded, signer_expressions)
     for path in (directory / "signed").iterdir():
         if path.name.endswith("-cc1-part.psbt"):
             path.unlink()
     with pytest.raises(AuditError, match="need 2 valid signatures"):
-        finalize_bundle(directory)
+        finalize_snapshot(directory)
 
 
 def test_cli_end_to_end_with_fake_node(tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
@@ -414,11 +415,12 @@ def test_cli_end_to_end_with_fake_node(tmp_path, wallet, funded, signer_expressi
             sign_psbt(psbt, signer)
         (out_dir / "signed" / Path(files[address]).name.replace(".psbt", "-signed.psbt")).write_text(psbt.to_string())
     assert audit_cli.main(["finalize", str(out_dir)]) == 0
-    assert capsys.readouterr().out.strip() == str(out_dir / "proofs.json")
+    proofs = proofs_file_in(out_dir)
+    assert capsys.readouterr().out.strip() == str(proofs) and proofs.name.startswith("watch-") and proofs.name.endswith("-994-proofs.json")
     assert audit_cli.main(["verify", str(out_dir), "--report", str(tmp_path / "r.json")]) == 0
     text = capsys.readouterr().out
     assert "RESULT: OK" in text and json.loads((tmp_path / "r.json").read_text())["ok"]
-    assert audit_cli.main(["verify", str(out_dir / "proofs.json"), "--json", "--offline"]) == 0
+    assert audit_cli.main(["verify", str(proofs), "--json", "--offline"]) == 0
     assert json.loads(capsys.readouterr().out)["stamp"]["ok"] is None
     assert audit_cli.main(["help", "snapshot"]) == 0
     assert "Examples:" in capsys.readouterr().out
@@ -426,8 +428,8 @@ def test_cli_end_to_end_with_fake_node(tmp_path, wallet, funded, signer_expressi
 
 def test_proofs_document_names_addresses_not_a_wallet(tmp_path, wallet, funded, signer_expressions):
     """The auditor's document carries no descriptor, no xpub, no derivation path and no node wallet name."""
-    directory = _signed_bundle(tmp_path, wallet, funded, signer_expressions)
-    document = finalize_bundle(directory)
+    directory = _signed_snapshot(tmp_path, wallet, funded, signer_expressions)
+    document = finalize_snapshot(directory)
     text = json.dumps(document)
     assert "wallet" not in document and "node_wallet" not in document and "source" not in document
     assert wallet.to_descriptor() not in text and all(str(c.xpub) not in text for c in wallet.cosigners)
@@ -441,8 +443,8 @@ def test_proofs_document_names_addresses_not_a_wallet(tmp_path, wallet, funded, 
 
 
 def test_verify_checks_document_consistency(tmp_path, wallet, funded, signer_expressions):
-    directory = _signed_bundle(tmp_path, wallet, funded, signer_expressions)
-    document = finalize_bundle(directory)
+    directory = _signed_snapshot(tmp_path, wallet, funded, signer_expressions)
+    document = finalize_snapshot(directory)
     cli = FakeCli(wallet, funded, tip=1200)
     good = verify_proofs(document, cli, engines=["btclib"])
     assert good["ok"] and good["summary"]["document_consistent"]
@@ -470,15 +472,15 @@ def test_wallet_from_node(wallet, funded):
         wallet_from_node(FakeCli(wallet, funded, rpcwallet=False))
 
 
-def test_snapshot_skips_addresses_earlier_bundles_prove(tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
-    """A ledger of bundles; a later snapshot lists only addresses no bundle proves yet, and joins the ledger."""
-    from bip322audit.ledger import find_proofs, proven_addresses, proven_outpoints
+def test_snapshot_skips_addresses_earlier_snapshots_prove(tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
+    """The wallet's snapshots; a later snapshot lists only addresses none of them proves yet, and joins them."""
+    from bip322audit.proofs import find_proofs, proven_addresses, proven_outpoints
 
-    ledger = tmp_path / "ledger"
-    first = _signed_bundle(ledger / "snapshot-1", wallet, funded, signer_expressions)  # helper appends /bundle
-    (first / "proofs.json").write_text(json.dumps(finalize_bundle(first)))
+    ledger = snapshots_dir("watch")
+    first = _signed_snapshot(ledger / "2026-01-01-994", wallet, funded, signer_expressions)  # helper appends /snapshot
+    (first / "watch-2026-01-01-994-proofs.json").write_text(json.dumps(finalize_snapshot(first)))
     assert len(find_proofs([ledger])) == 1 and len(proven_outpoints([ledger])) == 3 and proven_addresses([ledger]) == set(funded)
-    assert find_proofs([first / "proofs.json"]) == find_proofs([first]) == find_proofs([ledger])
+    assert find_proofs([first / "watch-2026-01-01-994-proofs.json"]) == find_proofs([first]) == find_proofs([ledger])
 
     # a new output on a new address, and one more on an already proven address: only the new address needs a proof
     a3 = wallet.derive(3).address
@@ -491,15 +493,15 @@ def test_snapshot_skips_addresses_earlier_bundles_prove(tmp_path, wallet, funded
     with pytest.raises(RpcError, match="beyond the 5 on already proven addresses"):
         take_snapshot(cli, wallet, "x", skip_addresses=proven_addresses([ledger]) | {a3})
 
-    # the CLI: --skip-proven LEDGER puts the new bundle into the ledger
+    # the CLI: --skip-proven reads the wallet's snapshots, and the new snapshot joins them as <date>-<height>
     import bip322audit.cli as audit_cli
 
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
     monkeypatch.chdir(tmp_path)
-    assert audit_cli.main(["-w", "watch", "snapshot", "--skip-proven", str(ledger)]) == 0
+    assert audit_cli.main(["-w", "watch", "snapshot", "--skip-proven"]) == 0
     out, err = capsys.readouterr()
     new_dir = Path(out.strip())
-    assert new_dir.parent == ledger and new_dir.name.startswith("snapshot-") and json.loads(err)["skipped_proven"] == 4
+    assert new_dir.parent == ledger and new_dir.name.endswith("-1014") and json.loads(err)["skipped_proven"] == 4
     assert json.loads(err)["utxos"] == 1 and (new_dir / "to_sign").is_dir()
 
 
@@ -520,8 +522,8 @@ def test_prove_addresses_that_hold_nothing_yet(tmp_path, wallet, funded, signer_
     import bip322audit.cli as audit_cli
 
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
-    ledger = tmp_path / "ledger"
-    assert audit_cli.main(["-w", "watch", "prove", change, "--ledger", str(ledger)]) == 0
+    ledger = snapshots_dir("watch")
+    assert audit_cli.main(["-w", "watch", "prove", change]) == 0
     out, err = capsys.readouterr()
     bundle = Path(out.strip())
     assert bundle.parent == ledger and json.loads(err)["utxos"] == 0 and json.loads(err)["addresses"] == 1
@@ -530,14 +532,14 @@ def test_prove_addresses_that_hold_nothing_yet(tmp_path, wallet, funded, signer_
     for signer in signer_expressions[:2]:
         assert sign_psbt(psbt, signer) == 1
     (bundle / "signed" / "change-part.psbt").write_text(psbt.to_string())
-    document = finalize_bundle(bundle, cli=cli)
+    document = finalize_snapshot(bundle, cli=cli)
     assert document["proofs"][0]["address"] == change and document["proofs"][0]["utxos"] == [] and document["total_sat"] == 0
     report = verify_proofs(document, cli, engines=["btclib"])
     assert report["ok"] and report["summary"]["utxos_verified_at_snapshot"] == "0/0" and "RESULT: OK" in format_report(report)
-    from bip322audit.ledger import proven_addresses
+    from bip322audit.proofs import proven_addresses
 
     assert proven_addresses([bundle.parent]) == set() and proven_addresses([bundle]) == set()  # not finalized to disk yet
-    (bundle / "proofs.json").write_text(json.dumps(document))
+    (bundle / f"watch-{bundle.name}-proofs.json").write_text(json.dumps(document))
     assert proven_addresses([ledger]) == {change}
 
 
@@ -584,3 +586,14 @@ def test_holdings_by_output_and_by_address(wallet, funded, monkeypatch, capsys):
         "held at block 1000, 3 output(s)\nnode       Bitcoin Core 31.1.0 (bip322-audit " + __version__ + ")"
     )
     assert audit_cli.main(["holdings", a1, "--json"]) == 0 and json.loads(capsys.readouterr().out)["total_sat"] == 10_000_000
+
+
+def test_a_second_snapshot_in_the_same_block_gets_its_own_proofs_file_name(tmp_path, wallet, funded, signer_expressions):
+    """Two snapshots at one stamp are ``<date>-<height>`` and ``<date>-<height>-2``; their proofs files must differ as well."""
+    from bip322audit.datadir import proofs_file_name
+
+    stamp = {"height": 994, "hash": "ab" * 32, "time": "2026-01-01T00:00:00Z"}
+    assert proofs_file_name("watch", Path("x/2026-01-01-994"), stamp) == "watch-2026-01-01-994-proofs.json"
+    assert proofs_file_name("watch", Path("x/2026-01-01-994-2"), stamp) == "watch-2026-01-01-994-2-proofs.json"
+    assert proofs_file_name("watch", Path("x/audit-2026"), stamp) == "watch-2026-01-01-994-proofs.json"  # named by the owner: the stamp
+    assert proofs_file_name(None, Path("x/audit-2026"), stamp) == "2026-01-01-994-proofs.json"

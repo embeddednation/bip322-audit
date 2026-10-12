@@ -6,14 +6,15 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_audit import T0, FakeCli, _signed_bundle, fake_hash
+from test_audit import T0, FakeCli, _signed_snapshot, fake_hash
 
 import bip322audit.cli as audit_cli
-from bip322audit.audit import AuditError, finalize_bundle, format_report, verify_proofs
+from bip322audit.audit import AuditError, finalize_snapshot, format_report, verify_proofs
+from bip322audit.datadir import proofs_file_in, snapshots_dir
 from bip322audit.holdings import holdings
-from bip322audit.ledger import find_proofs, proven_addresses
+from bip322audit.proofs import find_proofs, proven_addresses
 from bip322audit.rpc import BitcoinCli, RpcError
-from bip322audit.snapshot import take_snapshot, wallet_from_node, write_bundle
+from bip322audit.snapshot import take_snapshot, wallet_from_node, write_snapshot
 from bip322audit.stamp import Stamp, check_stamp, compose_message, iso_utc, parse_stamp
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,7 +30,7 @@ def funded(wallet):
 @pytest.fixture(scope="module")
 def signed_template(tmp_path_factory, wallet, funded, signer_expressions):
     """One signed bundle for the module (the snapshot searches 1000 indexes for the node's foreign coins: seconds)."""
-    return _signed_bundle(tmp_path_factory.mktemp("template"), wallet, funded, signer_expressions)
+    return _signed_snapshot(tmp_path_factory.mktemp("template"), wallet, funded, signer_expressions)
 
 
 @pytest.fixture
@@ -39,7 +40,7 @@ def bundle(tmp_path, signed_template):
 
 @pytest.fixture
 def document(bundle):
-    return finalize_bundle(bundle)
+    return finalize_snapshot(bundle)
 
 
 def _copy(document):
@@ -203,7 +204,7 @@ def test_finalize_with_node_wallet_named_empty_string(bundle, tmp_path, wallet, 
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
     assert audit_cli.main(["finalize", str(directory)]) == 0
     assert "no node wallet known" not in capsys.readouterr().err and "-rpcwallet=" in fake.argv
-    assert json.loads((directory / "proofs.json").read_text())["spends"] == {}
+    assert json.loads(proofs_file_in(directory).read_text())["spends"] == {}
     assert audit_cli._opt(audit_cli.build_parser().parse_args(["-w", "", "stamp"]), "wallet") == ""  # noqa: SLF001
 
 
@@ -214,11 +215,11 @@ def test_finalize_offline_keeps_recorded_spends(bundle, tmp_path, wallet, funded
     fake = FakeCli(wallet, funded, tip=1200, spent={(txid, vout): 1150})
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
     assert audit_cli.main(["finalize", str(directory)]) == 0
-    before = json.loads((directory / "proofs.json").read_text())
+    before = json.loads(proofs_file_in(directory).read_text())
     assert list(before["spends"]) == [f"{txid}:{vout}"]
     capsys.readouterr()
     assert audit_cli.main(["finalize", str(directory), "--offline"]) == 0
-    after = json.loads((directory / "proofs.json").read_text())
+    after = json.loads(proofs_file_in(directory).read_text())
     assert after["spends"] == before["spends"] and after["spends_utc"] == before["spends_utc"]
     assert "kept" in capsys.readouterr().err
 
@@ -325,7 +326,7 @@ def test_bundle_names_do_not_collide_and_force_is_limited(tmp_path, wallet, fund
     (first / "signed" / "to_sign-01-part.psbt").unlink()
     (first / "proofs.json").write_text("{}")
     assert audit_cli.main(["-w", "watch", "snapshot", "--max-index", "20", "-o", str(first), "--force"]) == 2
-    assert "proofs.json" in capsys.readouterr().err and (first / "proofs.json").read_text() == "{}"
+    assert "proofs file" in capsys.readouterr().err and (first / "proofs.json").read_text() == "{}"
 
 
 def test_snapshot_says_what_it_left_out(tmp_path, wallet, funded, monkeypatch, capsys):
@@ -384,7 +385,7 @@ def test_proofs_document_is_built_from_a_whitelist(bundle, tmp_path, wallet, fun
     snap["addresses"][0]["origin"] = "ea34d476"
     snap["addresses"][0]["utxos"][0]["desc"] = "wsh(...)"
     (directory / "snapshot.json").write_text(json.dumps(snap))
-    document = finalize_bundle(directory, cli=FakeCli(wallet, funded, tip=1200))
+    document = finalize_snapshot(directory, cli=FakeCli(wallet, funded, tip=1200))
     assert set(document) == PROOFS_KEYS
     assert all(set(p) == {"address", "utxos", "total_sat", "signature", "variant"} for p in document["proofs"])
     assert all(set(u) == {"txid", "vout", "amount_sat", "height", "blockhash"} for p in document["proofs"] for u in p["utxos"])
@@ -402,7 +403,7 @@ def test_proofs_document_is_built_from_a_whitelist(bundle, tmp_path, wallet, fun
 
     monkeypatch.setattr(audit_module, "signature_from_psbt", lambda psbt: "pof" + "A" * 40)
     with pytest.raises(AuditError, match="smp"):
-        finalize_bundle(directory)
+        finalize_snapshot(directory)
 
 
 def test_finalize_names_files_and_lists_ignored_ones(bundle, tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
@@ -412,7 +413,7 @@ def test_finalize_names_files_and_lists_ignored_ones(bundle, tmp_path, wallet, f
     (directory / "signed" / "garbage.psbt").write_text("not a psbt")
     (directory / "signed" / "sub").mkdir()
     notes = []
-    finalize_bundle(directory, notes=notes)
+    finalize_snapshot(directory, notes=notes)
     assert sorted(n.split(":")[0] for n in notes) == ["ignored signed/garbage.psbt", "ignored signed/notes.txt", "ignored signed/sub"]
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: FakeCli(wallet, funded))
     assert audit_cli.main(["finalize", str(directory), "--offline"]) == 0
@@ -426,7 +427,7 @@ def test_finalize_names_files_and_lists_ignored_ones(bundle, tmp_path, wallet, f
 
     monkeypatch.setattr(audit_module, "combine_psbts", refuse)
     with pytest.raises(AuditError) as caught:
-        finalize_bundle(directory)
+        finalize_snapshot(directory)
     message = str(caught.value)
     assert all(a in message for a in funded) and "to_sign-01-cc0-part.psbt" in message and "witness_script differs" in message
 
@@ -498,15 +499,17 @@ def test_stamp_hardening(wallet, funded):
     assert "unknown to this node" in check_stamp(FakeCli(wallet, funded, tip=1000), late)["error"]
 
 
-def test_writes_are_atomic_and_ledger_reports_skipped_files(bundle, tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
-    """Finding 22: a failed write leaves the old file; a truncated proofs.json and a mistyped --skip-proven are reported."""
+def test_writes_are_atomic_and_unreadable_proofs_files_are_reported(
+    bundle, tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys
+):
+    """Finding 22: a failed write leaves the old file; a truncated proofs file is reported, and --skip-proven needs a wallet to read."""
     import bip322audit.snapshot as snapshot_module
 
     directory = bundle
     fake = FakeCli(wallet, funded, tip=1200)
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
     assert audit_cli.main(["finalize", str(directory), "--offline"]) == 0
-    good = (directory / "proofs.json").read_text()
+    good = proofs_file_in(directory).read_text()
     report_path = tmp_path / "report.json"
     report_path.write_text("OLD")
     snap_before = (directory / "snapshot.json").read_text()
@@ -520,28 +523,29 @@ def test_writes_are_atomic_and_ledger_reports_skipped_files(bundle, tmp_path, wa
         assert audit_cli.main(["verify", str(directory), "--report", str(report_path)]) == 2
         snapshot, psbts = take_snapshot(FakeCli(wallet, funded), wallet, "x", max_index=20)
         with pytest.raises(OSError):
-            write_bundle(directory, snapshot, psbts)
-    assert (directory / "proofs.json").read_text() == good and report_path.read_text() == "OLD"
+            write_snapshot(directory, snapshot, psbts)
+    assert proofs_file_in(directory).read_text() == good and report_path.read_text() == "OLD"
     assert (directory / "snapshot.json").read_text() == snap_before
     assert not [p.name for p in directory.iterdir() if p.name.endswith(".tmp")] and not list(tmp_path.glob(".*.tmp"))
     capsys.readouterr()
-    # the ledger
-    ledger = tmp_path / "ledger"
+    # the wallet's snapshots: one whole proofs file, one truncated (and one under the name earlier versions used)
+    ledger = snapshots_dir("watch")
     (ledger / "a").mkdir(parents=True)
     (ledger / "a" / "proofs.json").write_text(good)
     (ledger / "b").mkdir()
-    (ledger / "b" / "proofs.json").write_text(good[: len(good) // 2])
+    (ledger / "b" / "watch-b-proofs.json").write_text(good[: len(good) // 2])
     skipped = []
     assert len(find_proofs([ledger], skipped=skipped)) == 1 and proven_addresses([ledger], skipped=skipped) == set(funded)
-    assert [p for p, _ in skipped] == [ledger / "b" / "proofs.json"] * 2
+    assert [p for p, _ in skipped] == [ledger / "b" / "watch-b-proofs.json"] * 2
     later = FakeCli(wallet, {**funded, wallet.derive(3).address: [(7_000_000, 1010)]}, tip=1020)
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: later)
-    assert audit_cli.main(["-w", "watch", "snapshot", "--max-index", "20", "--skip-proven", str(ledger), "-o", str(tmp_path / "n1")]) == 0
+    assert audit_cli.main(["-w", "watch", "snapshot", "--max-index", "20", "--skip-proven", "-o", str(tmp_path / "n1")]) == 0
     err = capsys.readouterr().err
-    assert "warning" in err and str(ledger / "b" / "proofs.json") in err
+    assert "warning" in err and str(ledger / "b" / "watch-b-proofs.json") in err
     monkeypatch.chdir(tmp_path)
-    assert audit_cli.main(["-w", "watch", "snapshot", "--max-index", "20", "--skip-proven", str(tmp_path / "ledgre")]) == 2
-    assert "does not exist" in capsys.readouterr().err and not list(tmp_path.glob("snapshot-*"))
+    monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: FakeCli(wallet, funded, rpcwallet=False))  # no node wallet to name one
+    assert audit_cli.main(["snapshot", "--max-index", "20", "--skip-proven", "-o", str(tmp_path / "n2")]) == 2
+    assert "name the wallet" in capsys.readouterr().err and not (tmp_path / "n2").exists()
 
 
 def test_walkthrough_never_removes_a_given_directory(tmp_path):
@@ -560,7 +564,7 @@ def test_docs_name_every_command_module_and_exit_code():
     readme, design = (ROOT / "README.md").read_text(), (ROOT / "docs" / "DESIGN.md").read_text()
     for module in sorted(p.name for p in (ROOT / "bip322audit").glob("*.py") if not p.name.startswith("_")):
         assert f"bip322audit/{module}" in readme, module
-    for word in ("prove", "holdings", "ledger", "INCOMPLETE", "Exit codes"):
+    for word in ("prove", "holdings", "snapshots", "INCOMPLETE", "Exit codes"):
         assert word in readme and word in design, word
     assert design.count("never imports") == 1  # the paragraph that said it twice
     assert "prove" in audit_cli.__doc__ and "holdings" in audit_cli.__doc__

@@ -28,7 +28,7 @@ credentials are what is trusted and the tool holds none. The commands are
   needed for that; an auditor may still ask for their engagement reference in
   the text, which costs nothing and documents the request in their file.
 * **Snapshot semantics.** The stamp block is the snapshot block; only outputs
-  confirmed at or before it are listed, so a bundle means "these coins, at
+  confirmed at or before it are listed, so a snapshot means "these coins, at
   that block". Coins come from `listunspent` (a Core wallet with the
   descriptor; its `desc` field gives branch and index) or `scantxoutset`.
   Everything is read under one tip: the tip is read before and after the
@@ -36,16 +36,22 @@ credentials are what is trusted and the tool holds none. The commands are
   counted back from the tip and the block hashes recorded for them cannot
   belong to different moments. `verify` and `holdings` count a creation
   height back from the block `gettxout` itself answered at (`bestblock`),
-  never from a tip read earlier. What the node listed and the bundle does
+  never from a tip read earlier. What the node listed and the snapshot does
   not (another descriptor's coins, addresses proven earlier) is counted and
   recorded in `snapshot.json` with the reason.
-* **`prove`.** A bundle for exactly the addresses given, whether or not they
+* **`prove`.** A snapshot for exactly the addresses given, whether or not they
   hold coins yet: the check to run on a change address before broadcasting.
 * **`holdings`.** A reader's lookup, by output (`gettxout`) or by address
   (`scantxoutset`): unspent now, and with `--at` whether confirmed at or
-  before that block. It needs no bundle.
-* **The ledger.** Any directory tree of bundles. `--skip-proven` reads the
-  `proofs.json` files under it to leave out addresses already proven; a file
+  before that block. It needs no snapshot.
+* **One tree, named by the tools.** `~/bip322/<wallet>/snapshots/<date>-<height>/`
+  holds each snapshot, and `~/bip322/config.toml` the defaults; `-w` names the
+  wallet and the wallet names the rest, so the yearly commands take no paths.
+  A directory is named for its place (the tree supplies wallet and kind); a
+  file that leaves the tree, the proofs file, is named for its life,
+  `<wallet>-<date>-<height>-proofs.json`, and keeps that name beside a
+  statement and at the auditor's. `--skip-proven` reads the proofs files
+  under the wallet's snapshots to leave out addresses already proven; a file
   it cannot read is reported, never silently taken as "nothing proven".
 * **Proof of funds without `pof`.** One `smp` proof per funded address; the
   auditor establishes the coins from the chain. Nothing signed references a
@@ -78,7 +84,7 @@ credentials are what is trusted and the tool holds none. The commands are
   row is `spent_time_unknown` (existence shown, held-at-stamp not) and the
   result is INCOMPLETE; the same when the recorded spending block has left
   the main chain. A spend at or before the stamp is a contradiction.
-* **Addresses, not a wallet.** `proofs.json` carries no descriptor, xpub,
+* **Addresses, not a wallet.** The proofs file carries no descriptor, xpub,
   derivation path or node wallet name. `finalize` builds it from a fixed list
   of fields, so a field added to `snapshot.json` later cannot leak by
   default; proofs are in address order, not derivation order, and only `smp`
@@ -101,10 +107,10 @@ credentials are what is trusted and the tool holds none. The commands are
 ## Exit codes
 
 Every command: 0 done, 2 could not run (bad input, a file or the node not
-reachable, a bundle that cannot be finalized), with one `error:` line on
+reachable, a snapshot that cannot be finalized), with one `error:` line on
 stderr. `verify` reports its result in the exit code as well: 0 OK, 1 FAILED,
 3 INCOMPLETE. The three are also in the report as `result` (`ok`, `failed`,
-`incomplete`). The key `ok` is true only for `ok`; a reader who asks whether a bundle's proofs
+`incomplete`). The key `ok` is true only for `ok`; a reader who asks whether a proofs file's proofs
 stand, whatever became of its outputs since (bip322-report), reads `result` and
 accepts `incomplete`.
 

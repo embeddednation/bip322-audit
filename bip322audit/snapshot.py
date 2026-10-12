@@ -42,7 +42,7 @@ __all__ = [
     "psbt_file_name",
     "take_snapshot",
     "wallet_from_node",
-    "write_bundle",
+    "write_snapshot",
     "write_text_atomic",
 ]
 
@@ -210,7 +210,7 @@ def _sorted(by_address: dict[str, AddressCoins]) -> list[AddressCoins]:
 
 
 # --------------------------------------------------------------------------- #
-# the bundle on disk
+# the snapshot on disk
 # --------------------------------------------------------------------------- #
 
 
@@ -284,7 +284,7 @@ class Snapshot:
     addresses: list[dict]
     source: str
     node_wallet: str | None = None  # the node wallet the coins came from; finalize asks it for the spend history
-    skipped_proven: int = 0  # outputs left out because an earlier bundle proves their address (--skip-proven)
+    skipped_proven: int = 0  # outputs left out because an earlier snapshot proves their address (--skip-proven)
     left_out: dict = field(default_factory=dict)  # why -> {"outputs": n, "amount_sat": s}, for everything seen and not listed
 
     @property
@@ -327,8 +327,8 @@ def take_snapshot(
     """Build the snapshot and the unsigned PSBTs; returns (snapshot, {address: BIP322PSBT}).
 
     ``progress`` is an optional callable given a line of text before slow steps.
-    ``skip_addresses`` leaves out addresses that earlier bundles already prove
-    (see :func:`bip322audit.ledger.proven_addresses`).  ``addresses`` proves
+    ``skip_addresses`` leaves out addresses that earlier snapshots already prove
+    (see :func:`bip322audit.proofs.proven_addresses`).  ``addresses`` proves
     exactly these addresses of the wallet, whether or not they hold coins yet
     (a change address before the spend is broadcast, a deposit address before
     the deposit); their coins confirmed at the stamp, if any, are listed.
@@ -349,7 +349,7 @@ def take_snapshot(
     tip_height, stamp, message, coins, foreign = _read_under_one_tip(
         cli, wallet, template, source, depth=depth, strict_message=strict_message, max_index=max_index, progress=progress
     )
-    # recorded in snapshot.json and shown by the command: what the node listed and the bundle does not, and why
+    # recorded in snapshot.json and shown by the command: what the node listed and the snapshot does not, and why
     why = f"the node lists them but this descriptor does not derive them (another descriptor of the node wallet, or an index beyond {max_index})"
     left_out = {"other_descriptors": {**foreign, "amount_btc": btc(foreign["amount_sat"]), "why": why}}
     if addresses:
@@ -453,11 +453,11 @@ def _only_addresses(wallet: Wallet, coins: list[AddressCoins], addresses: list[s
 
 
 def _without_proven(coins: list[AddressCoins], skip_addresses: set[str]) -> tuple[list[AddressCoins], dict]:
-    """The coins on addresses no earlier bundle proves, and the ``left_out`` entry for the rest."""
+    """The coins on addresses no earlier snapshot proves, and the ``left_out`` entry for the rest."""
     kept = [c for c in coins if c.derived.address not in skip_addresses]
     skipped = sum(len(c.utxos) for c in coins) - sum(len(c.utxos) for c in kept)
     amount = sum(c.total_sat for c in coins) - sum(c.total_sat for c in kept)
-    why = "on addresses that an earlier bundle already proves (--skip-proven)"
+    why = "on addresses that an earlier snapshot already proves (--skip-proven)"
     return kept, {"outputs": skipped, "amount_sat": amount, "amount_btc": btc(amount), "why": why}
 
 
@@ -491,10 +491,10 @@ def psbt_file_name(sequence: int) -> str:
     return f"to_sign/to_sign-{sequence:02d}.psbt"
 
 
-def write_bundle(directory: Path, snapshot: Snapshot, psbts: dict[str, object]) -> list[Path]:
+def write_snapshot(directory: Path, snapshot: Snapshot, psbts: dict[str, object]) -> list[Path]:
     """``snapshot.json``, ``message.txt``, ``to_sign/`` with one PSBT per address, an empty ``signed/``; returns the written paths.
 
-    Writing into an earlier bundle's directory replaces these files only, and removes the
+    Writing into an earlier snapshot's directory replaces these files only, and removes the
     ``to_sign-NN.psbt`` of the earlier run that the new one does not have (they would be for another message).
     """
     directory.mkdir(parents=True, exist_ok=True)
@@ -519,5 +519,5 @@ def write_bundle(directory: Path, snapshot: Snapshot, psbts: dict[str, object]) 
 
 
 def load_snapshot(directory: Path) -> dict:
-    """``snapshot.json`` of a bundle directory, as written by :func:`write_bundle`."""
+    """``snapshot.json`` of a snapshot directory, as written by :func:`write_snapshot`."""
     return json.loads((directory / "snapshot.json").read_text())

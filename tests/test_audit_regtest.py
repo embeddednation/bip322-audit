@@ -14,9 +14,9 @@ from bip322core.psbt import parse_psbt
 from bip322core.wallet import Wallet
 from embit.networks import NETWORKS
 
-from bip322audit.audit import finalize_bundle, format_report, verify_proofs
+from bip322audit.audit import finalize_snapshot, format_report, verify_proofs
 from bip322audit.rpc import BitcoinCli
-from bip322audit.snapshot import take_snapshot, write_bundle
+from bip322audit.snapshot import take_snapshot, write_snapshot
 from bip322audit.stamp import parse_stamp
 from bip322audit.testing import Node, find_bitcoin_core
 
@@ -89,14 +89,14 @@ def test_audit_workflow_on_regtest(core, regtest_wallet, signer_expressions, pri
 
     # ---- sign (software cosigners A and C), finalize, verify -------------------- #
     directory = tmp_path / "bundle"
-    write_bundle(directory, snapshot, psbts)
+    write_snapshot(directory, snapshot, psbts)
     files = {a["address"]: a["file"] for a in snapshot.addresses}
     for address in psbts:
         psbt = parse_psbt((directory / files[address]).read_text())
         assert sign_psbt(psbt, signer_expressions[0]) == 1 and sign_psbt(psbt, signer_expressions[2]) == 1
         (directory / "signed" / Path(files[address]).name.replace(".psbt", "-part.psbt")).write_text(psbt.to_string())
     assert snapshot.node_wallet == "watch"
-    document = finalize_bundle(directory, cli=watch)
+    document = finalize_snapshot(directory, cli=watch)
     assert document["spends"] == {} and document["spends_utc"]  # nothing spent yet
     (directory / "proofs.json").write_text(json.dumps(document, indent=2))
     report = verify_proofs(document, node, txindex=True)
@@ -157,7 +157,7 @@ def test_audit_workflow_on_regtest(core, regtest_wallet, signer_expressions, pri
     text = format_report(report)
     assert "RESULT: INCOMPLETE" in text and "spent_time_unknown" in text
     # the owner's wallet knows the spending transaction; with it the auditor shows the outputs were unspent at the stamp
-    document = finalize_bundle(directory, cli=watch)  # re-run on the owner's node: the spend goes into proofs.json
+    document = finalize_snapshot(directory, cli=watch)  # re-run on the owner's node: the spend goes into proofs.json
     assert len(document["spends"]) == n_spent
     report = verify_proofs(document, node)
     assert report["ok"] and report["result"] == "ok" and report["summary"]["utxos_shown_unspent_at_snapshot"] == "3/3"

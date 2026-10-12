@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.13.0 (2026-10-12)
+
+One tree, named by the tools: `~/bip322/<wallet>/snapshots/<date>-<height>/`
+(`BIP322_DIR` moves it), with `~/bip322/config.toml` for the defaults
+(`wallet`, `cli`, `timeout`, `text`; `node` per wallet). `-w` names the
+wallet, else `config.toml`, else the node's one loaded wallet.
+
+- `snapshot` and `prove` write into the wallet's `snapshots/` by default;
+  `-o DIR` still writes elsewhere. `--skip-proven` is a flag: it reads the
+  wallet's own snapshots. `prove --ledger` is gone.
+- `finalize` writes `<wallet>-<date>-<height>-proofs.json`, a name the file
+  keeps wherever it goes; a `proofs.json` of an earlier version is still read
+  and, when present, written to. `finalize` and `verify` take a snapshot's
+  name under the wallet's `snapshots/`, a path, or nothing for the newest.
+- The words: a snapshot (the directory, whichever command wrote it) and its
+  proofs file; "bundle" and "ledger" are gone from the commands, the help
+  and the documentation. Module `ledger.py` is now `proofs.py`;
+  `finalize_bundle` and `write_bundle` are `finalize_snapshot` and
+  `write_snapshot`.
+- Requires bip322-core 0.11.
+
 ## 0.12.1 (2026-10-06)
 
 First public release.

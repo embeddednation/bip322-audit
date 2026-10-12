@@ -1,4 +1,4 @@
-"""Finalize a snapshot bundle into proofs, and verify proofs against a node.
+"""Finalize a snapshot into its proofs file, and verify a proofs file against a node.
 
 ``proofs.json`` is the artifact handed to the auditor: the snapshot (stamp,
 addresses, UTXOs, message) plus one BIP-322 signature per address.  ``verify``
@@ -19,6 +19,7 @@ from bip322core.psbt import BIP322PSBT, combine_psbts, finalize_psbt, parse_psbt
 from bip322core.verify import verify_message
 
 from . import TOOL
+from .datadir import proofs_file_in
 from .rpc import BitcoinCli, RpcError, btc, to_sat
 from .snapshot import Utxo, load_snapshot
 from .stamp import Stamp, check_stamp, iso_utc, parse_stamp
@@ -31,7 +32,7 @@ __all__ = [
     "AuditError",
     "collect_psbts",
     "collect_spends",
-    "finalize_bundle",
+    "finalize_snapshot",
     "format_report",
     "load_proofs",
     "verify_proofs",
@@ -39,7 +40,7 @@ __all__ = [
 
 
 class AuditError(Exception):
-    """A bundle that cannot be finalized, or a file that is not a proofs document; the message is one line (or one per address)."""
+    """A snapshot that cannot be finalized, or a file that is not a proofs document; the message is one line (or one per address)."""
 
 
 # verify's results: everything checked out / nothing failed but some listed outputs are not shown held at the
@@ -67,7 +68,7 @@ def _scan_psbts(directory: Path) -> tuple[dict[str, list[tuple[Path, BIP322PSBT]
             name = path.relative_to(directory).as_posix()
             is_psbt = path.suffix.lower() == ".psbt" and path.is_file()
             if folder == directory and not is_psbt:
-                continue  # the root holds the bundle's own files and whatever else the owner keeps there
+                continue  # the root holds the snapshot's own files and whatever else the owner keeps there
             if not is_psbt:
                 ignored.append(f"{name}: not a .psbt file")
                 continue
@@ -81,11 +82,11 @@ def _scan_psbts(directory: Path) -> tuple[dict[str, list[tuple[Path, BIP322PSBT]
 
 
 def collect_psbts(directory: Path) -> dict[str, list[BIP322PSBT]]:
-    """Every parseable PSBT in ``to_sign/`` and ``signed/`` (and the bundle root), grouped by to_sign txid."""
+    """Every parseable PSBT in ``to_sign/`` and ``signed/`` (and the snapshot's root), grouped by to_sign txid."""
     return {txid: [psbt for _, psbt in found] for txid, found in _scan_psbts(directory)[0].items()}
 
 
-def finalize_bundle(
+def finalize_snapshot(
     directory: Path,
     *,
     lenient: bool = False,
@@ -121,7 +122,7 @@ def finalize_bundle(
     wanted = {entry["to_sign_txid"] for entry in snapshot["addresses"]}
     for txid, found in groups.items():
         if txid not in wanted:
-            ignored += [f"{path.relative_to(directory).as_posix()}: a PSBT for no address of this bundle" for path, _ in found]
+            ignored += [f"{path.relative_to(directory).as_posix()}: a PSBT for no address of this snapshot" for path, _ in found]
     notes += [f"ignored {line}" for line in ignored]
     proofs = []
     missing = []
@@ -759,11 +760,15 @@ def format_report(report: dict) -> str:
 
 
 def load_proofs(path: Path) -> dict:
-    """The proofs document at ``path`` (a ``proofs.json`` or a bundle directory holding one), parsed and not yet checked.
+    """The proofs document at ``path`` (a proofs file, or a snapshot directory holding one), parsed and not yet checked.
 
-    Raises :class:`AuditError` for a file that is not JSON, ``OSError`` for one that cannot be read.
+    Raises :class:`AuditError` for a file that is not JSON or a snapshot not finalized, ``OSError`` for a file that cannot be read.
     """
-    path = path / "proofs.json" if path.is_dir() else path
+    if path.is_dir():
+        found = proofs_file_in(path)
+        if found is None:
+            raise AuditError(f"{path}: no proofs file (not finalized yet)")
+        path = found
     try:
         return json.loads(path.read_text())
     except ValueError as exc:

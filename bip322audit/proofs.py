@@ -1,8 +1,8 @@
-"""A ledger: any directory tree that holds bundles written by ``snapshot`` and ``finalize``.
+"""Proofs files in a directory tree: finding them, and what they prove.
 
-Bundles accumulate over time (one per audit, one per batch of newly created
-outputs); the ledger is just where they are kept.  Nothing here talks to a
-node.
+Snapshots accumulate over time (one per audit, one per batch of newly created
+outputs) under a wallet's ``snapshots/`` directory; ``finalize`` leaves a
+proofs file in each.  Nothing here talks to a node.
 """
 
 from __future__ import annotations
@@ -11,16 +11,16 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-__all__ = ["Outpoint", "addresses_in", "find_proofs", "outpoints_in", "proven_addresses", "proven_outpoints"]
+__all__ = ["Outpoint", "addresses_in", "find_proofs", "is_proofs_file_name", "outpoints_in", "proven_addresses", "proven_outpoints"]
 
 Outpoint = tuple[str, int]
 
 
 def find_proofs(roots: Iterable[Path | str], *, max_depth: int = 3, skipped: list | None = None) -> list[tuple[Path, dict]]:
-    """Every ``proofs.json`` under the roots, oldest stamp first.
+    """Every proofs file under the roots, oldest stamp first.
 
-    A root may be a ledger directory, a single bundle directory, or a
-    ``proofs.json`` file.  Files that do not parse as a proofs document are
+    A root may be a snapshots directory, a single snapshot directory, or a
+    proofs file (``*-proofs.json``, or ``proofs.json`` as earlier versions named it).  Files that do not parse as a proofs document are
     skipped; pass a list as ``skipped`` to learn which, as ``(path, reason)``
     (a truncated file must not silently mean "nothing proven").  Returns ``(path, document)`` pairs,
     each file once however many roots reach it, ordered by stamp height, then ``finalized_utc``, then
@@ -31,7 +31,7 @@ def find_proofs(roots: Iterable[Path | str], *, max_depth: int = 3, skipped: lis
         root = Path(root)
         candidates = [root] if root.is_file() else _walk(root, max_depth)
         for path in candidates:
-            if path.name != "proofs.json":
+            if not is_proofs_file_name(path.name):
                 continue
             try:
                 document = json.loads(path.read_text())
@@ -44,6 +44,11 @@ def find_proofs(roots: Iterable[Path | str], *, max_depth: int = 3, skipped: lis
             elif skipped is not None:
                 skipped.append((path, "not a proofs document (no proofs list or no stamp)"))
     return sorted(found.items(), key=lambda item: (int(item[1]["stamp"]["height"]), item[1].get("finalized_utc") or "", str(item[0])))
+
+
+def is_proofs_file_name(name: str) -> bool:
+    """``<wallet>-<date>-<height>-proofs.json`` as ``finalize`` names it, or ``proofs.json`` as earlier versions did."""
+    return name == "proofs.json" or name.endswith("-proofs.json")
 
 
 def _walk(root: Path, max_depth: int) -> list[Path]:

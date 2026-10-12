@@ -11,7 +11,7 @@ Two roles:
 
 * **Owner**: `snapshot` (or `prove`, for given addresses), sign on the
   cosigners' devices, `finalize`. Needs a node with the wallet loaded
-  (watch-only is enough).
+  (watch-only is enough). Everything lands under `~/bip322/<wallet>/snapshots/`.
 * **Auditor**: `verify`, against any node that has the chain; `holdings` to
   look up single outputs or addresses. No wallet, no index, no key material,
   and nothing about the owner's wallet beyond the proven addresses.
@@ -53,17 +53,23 @@ The whole yearly flow across the three packages is in bip322-report's [handbook]
 For "we controlled these coins as of block N", repeatable whenever coins move:
 
 ```sh
-bip322 audit -w treasury snapshot --text "Annual audit {date}"      # the node wallet's own descriptor
-#   -> snapshot-2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
-#   sign every PSBT on the cosigners' devices, put the results into snapshot-.../signed/
-bip322 audit finalize snapshot-2026-09-14-912345           # -> proofs.json (hand this to the auditor)
-bip322 audit verify snapshot-2026-09-14-912345 --report audit-report.json
+bip322 audit snapshot                 # the node wallet's own descriptor
+#   -> ~/bip322/treasury/snapshots/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
+#   sign every PSBT on the cosigners' devices, put the results into its signed/
+bip322 audit finalize                 # the newest snapshot -> treasury-2026-09-14-912345-proofs.json (hand this to the auditor)
+bip322 audit verify --report audit-report.json
 ```
+
+The wallet is `-w NAME`, else `wallet` in `~/bip322/config.toml`, else the
+node's one loaded wallet; `finalize` and `verify` take a snapshot's name
+(`finalize 2026-09-14-912345`) or a path when the newest is not the one
+meant, and `verify` a proofs file. `-o DIR` writes a snapshot elsewhere.
+See [Where everything lives](#where-everything-lives).
 
 `finalize` also asks the node wallet the coins came from (recorded in
 `snapshot.json`) which listed outputs have been spent since, and records the
-spending transactions in `proofs.json`. If coins move between the snapshot and
-the audit, re-run `finalize` before handing `proofs.json` over; the proofs
+spending transactions in the proofs file. If coins move between the snapshot and
+the audit, re-run `finalize` before handing the proofs file over; the proofs
 themselves do not change. `--offline` skips that step and keeps the spends an
 earlier run recorded. A PSBT that cannot be used is reported with its address
 and file names, and files in `to_sign/` and `signed/` that were not used are
@@ -75,31 +81,30 @@ like a shell command line, so a path with spaces is quoted inside it:
 node call (default 600); a UTXO-set scan the tool gave up on keeps running on
 the node. Chains: `main`, `test`, `testnet4`, `signet`, `regtest`.
 
-`snapshot` reads the wallet's descriptor from the node wallet (`-w NAME`,
-`listdescriptors`; `--descriptor FILE` overrides and is cross-checked against
+`snapshot` reads the wallet's descriptor from the node wallet
+(`listdescriptors`; `--descriptor FILE` overrides and is cross-checked against
 the node), takes the block six behind the tip (`--depth`) as the stamp *and*
 the snapshot height: the message ends with `block: HEIGHT HASH TIME` taken
 from that block, and only outputs confirmed at that block are listed. Coins
-come from `listunspent` on the node wallet (the only one loaded, or `-w NAME`)
-or, when the node has no wallet, from a
+come from `listunspent` on the node wallet or, when the node has no wallet, from a
 `scantxoutset` of the descriptor (minutes on mainnet; the command says so
 before it starts; `--source` forces either). The stamp, the coins, their
 heights and block hashes are read under one tip: if a block arrives
 meanwhile, they are read again. The template accepts `{date}`, `{time}`,
-`{height}`, `{hash}` (date and time are the stamp block's header time, UTC);
-anything else in braces is refused, as is a template with a `block:` line of
+`{height}`, `{hash}` (date and time are the stamp block's header time, UTC;
+`text` in `config.toml` sets the default); anything else in braces is refused, as is a template with a `block:` line of
 its own, and the message is checked against hardware signers' message rules.
 
 `snapshot` covers one descriptor (`wsh(multi/sortedmulti)` or `wpkh`). Its
 summary and `snapshot.json` say which (`descriptor`), and under `left_out`
-how many outputs and how much the node listed that the bundle does not, and
+how many outputs and how much the node listed that the snapshot does not, and
 why: coins of another descriptor in the same node wallet, coins on addresses
-an earlier bundle proves. Descriptors of a kind it does not cover are named
-in `notes`. The default directory is `snapshot-<date>-<height>`, with `-2`,
-`-3` ... when that exists; `-o DIR --force` rewrites a bundle that holds no
-signed PSBTs and no `proofs.json` yet, and nothing else.
+an earlier snapshot proves. Descriptors of a kind it does not cover are named
+in `notes`. The snapshot's directory is `<date>-<height>` under the wallet's
+`snapshots/`, with `-2`, `-3` ... when that exists; `-o DIR --force` rewrites
+a snapshot that holds no signed PSBTs and no proofs file yet, and nothing else.
 
-`proofs.json` names addresses, not a wallet: the message, the stamp, and per
+The proofs file names addresses, not a wallet: the message, the stamp, and per
 address the proof and its outputs, plus the policy string (`2 of 3`). It is
 built from a fixed list of fields (`tool`, `chain`, `stamp`, `message`,
 `message_hex`, `policy`, `finalized_utc`, `total_sat`, `total_btc`, `spends`,
@@ -109,7 +114,9 @@ the proofs in address order and only `smp` proofs. No
 descriptor, no xpubs, no derivation paths and no node wallet name go in. The
 proofs stand per address, and the xpubs would let the auditor derive every
 address of the wallet, past and future, which no check of the claim needs.
-`snapshot.json`, the owner's copy, keeps all of it.
+`snapshot.json`, the owner's copy, keeps all of it. The file's name,
+`<wallet>-<date>-<height>-proofs.json`, says what it is wherever it ends up,
+and it keeps that name in the snapshot, beside a statement and at the auditor's.
 
 `verify` re-checks everything on the auditor's node: each BIP-322 signature,
 the stamp block (`getblockheader`: height, time, in main chain), that the
@@ -120,14 +127,14 @@ the stamp. An output spent since is fetched by the block hash the snapshot
 recorded (no `-txindex` needed): that shows it existed at the stamp with the
 claimed amount and address. Whether it was still *unspent* at the stamp needs
 the spending transaction, which only an address index or the owner's wallet
-knows; `finalize` records it in `proofs.json` from the node wallet's history
+knows; `finalize` records it in the proofs file from the node wallet's history
 (`listsinceblock` from the stamp block), and `verify` checks that it really
 spends the output and was confirmed after the stamp block. A spend at or
 before the stamp is a contradiction (`spent_before_snapshot`). A spent output
 with no recorded spend, or with one the node cannot find or whose block left
 the main chain, is `spent_time_unknown`: it existed, and nothing shows when
 it was spent, so it is not counted as held. The report's rows are built from
-what the node answered; nothing else in `proofs.json` is copied into them.
+what the node answered; nothing else in the proofs file is copied into them.
 Totals are computed from the listed outputs: `claimed`, `held at the stamp`
 (shown by the node) and `unspent now`. A `total_sat` that disagrees, an
 output or an address listed twice, a recorded spend that does not spend its
@@ -159,7 +166,7 @@ showed held.
 
 "Could not run" is bad input (an unknown placeholder, a file that is not a
 proofs document, a directory that exists), a node that cannot be reached or
-answers something that is not JSON, or a bundle that cannot be finalized;
+answers something that is not JSON, or a snapshot that cannot be finalized;
 the message is one line on stderr starting with `error:`.
 
 Completeness (that the listed addresses are all the holdings in scope) is not
@@ -188,29 +195,67 @@ time. This is how a reader of a statement checks its closing holdings. Coins spe
 show; the owner's records name them and `verify` checks those. A bech32
 address may be given in upper case.
 
-## Bundles over time: a ledger
+## Where everything lives
 
-Keep every bundle in one directory tree and it becomes the wallet's ledger of
-proofs. Two ways to add to it:
+One directory, `~/bip322` (`BIP322_DIR` moves it): one `config.toml`, and one
+directory per wallet, in which the tools name everything.
+
+```
+~/bip322/
+  config.toml
+  treasury/
+    snapshots/
+      2026-03-02-880412/                  # a prove during the year
+      2026-09-14-912345/                  # a full snapshot
+        snapshot.json  message.txt  to_sign/  signed/
+        treasury-2026-09-14-912345-proofs.json
+    statements/                           # bip322-report's
+```
+
+`-w NAME` names the wallet: its directory, and the node wallet of the same
+name (or the one `node` names in its `[wallets.NAME]` table of
+`config.toml`, for a node wallet whose name is long or no directory name).
+Without `-w`, `wallet` in `config.toml` names it, else the node's one loaded
+wallet does. A second wallet is a second directory, created when first
+written to. The snapshots hold the PSBTs, which carry the wallet's xpubs:
+they stay with the holder.
+
+`config.toml` is optional; its top-level keys are defaults for every wallet,
+a `[wallets.NAME]` table is for one, and the command line beats both:
+
+```toml
+wallet = "treasury"
+text = "Proof of control {date}"
+cli = "bitcoin-cli -rpcconnect=10.0.0.5"
+
+[wallets.treasury]
+node = "treasury-2of3-main"
+```
+
+Keys this package reads: `wallet`, `cli`, `timeout`, `text`, and `node` per
+wallet; bip322-report reads more.
+
+Over the years the snapshots accumulate, and their proofs files are what
+`--skip-proven` reads:
 
 ```sh
-bip322 audit -w treasury snapshot --text "Proof of control {date}" --skip-proven ledger
-#   -> ledger/snapshot-<date>-<height>/ with only the outputs no earlier bundle proves (new change, new deposits)
-bip322 audit -w treasury snapshot --text "Proof of control, audit FY2026, {date}" -o ledger/audit-2026
+bip322 audit snapshot --skip-proven
+#   -> snapshots/<date>-<height>/ with only the outputs no earlier snapshot of the wallet proves (new change, new deposits)
+bip322 audit snapshot --text "Proof of control, audit FY2026, {date}"
 #   -> every output the wallet holds, after the period's end, under a message that names the audit
 ```
 
 The block stamp in every message is the timestamp an audit needs: it shows
 the proof was made after that block, it can be checked on any node at any
 later date, and it cannot pass for another year. The auditor's request is
-therefore simply "a full bundle with a stamp after the period's last block";
+therefore simply "a full snapshot with a stamp after the period's last block";
 their engagement reference may go in the text if they want it in their file.
 
 A third way, for an address that holds nothing yet:
 
 ```sh
-bip322 audit -w treasury prove bc1q...change... --text "Proof of control {date}" --ledger ledger
-#   -> a bundle for exactly that address; refused if it is not the wallet's
+bip322 audit prove bc1q...change...
+#   -> a snapshot for exactly that address; refused if it is not the wallet's
 ```
 
 That is the check to run on the change address of a spend before broadcasting
@@ -218,22 +263,24 @@ it: sign, `finalize`, and a valid proof means the quorum controls where the
 change goes. A proof is about an address, so every output paid to it later
 is covered too, and `--skip-proven` skips addresses proven that way.
 
-`--skip-proven DIR` must exist, and a `proofs.json` under it that cannot be
-read (a truncated file) is named in a warning, since it proves nothing.
+A proofs file under the wallet's snapshots that cannot be read (a truncated
+file) is named in a warning, since it proves nothing. A file still named
+`proofs.json` (earlier versions) is read as well.
 
-Sign and `finalize` each as usual. `bip322 audit verify` checks one bundle;
+Sign and `finalize` each as usual. `bip322 audit verify` checks one proofs file;
 [bip322-report](https://github.com/embeddednation/bip322-report) reads the
-whole ledger to produce balance reports in which every output is backed by a
-verified proof.
+whole of the wallet's snapshots to produce the statement of a period, in
+which every output is backed by a verified proof.
 
 ## Layout
 
 ```
 bip322audit/stamp.py      the block stamp: fetch, parse, compose the message, check
-bip322audit/snapshot.py   coins at the stamp block (listunspent / scantxoutset), PSBT per address, the bundle (snapshot, prove)
+bip322audit/snapshot.py   coins at the stamp block (listunspent / scantxoutset), PSBT per address, the snapshot on disk (snapshot, prove)
 bip322audit/audit.py      finalize (combine, finalize, self-verify, record spends) and verify (the report)
 bip322audit/holdings.py   what outputs or addresses hold now, and at a block (holdings)
-bip322audit/ledger.py     a directory tree of bundles: which addresses and outputs earlier proofs cover
+bip322audit/proofs.py     the proofs files in a directory tree: which addresses and outputs earlier proofs cover
+bip322audit/datadir.py    ~/bip322: config.toml, the wallet directories, snapshot and proofs file names
 bip322audit/rpc.py        bitcoin-cli as a subprocess
 bip322audit/cli.py        the bip322-audit command
 bip322audit/testing.py    a throwaway regtest node for the regtest test and the walkthrough

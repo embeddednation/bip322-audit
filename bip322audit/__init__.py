@@ -5,10 +5,12 @@ Everything that talks to a node lives here (through ``bitcoin-cli``); the
 
 * ``snapshot``  stamp block, funded addresses, message, one BIP-322 PSBT per address
 * ``prove``     the same for given addresses, whether or not they hold coins yet
-* ``finalize``  collect the signed PSBTs, finalize, write ``proofs.json``
+* ``finalize``  collect the signed PSBTs, finalize, write the proofs file
 * ``verify``    BIP-322 verdicts, stamp check, UTXO checks, totals, report
 * ``holdings``  what outputs or addresses hold now, and at a block
-* the ledger    a directory tree of bundles (``--skip-proven``)
+
+Everything is kept in one tree, ``~/bip322/<wallet>/snapshots/<date>-<height>/``
+(``datadir``), and the proofs files under it are what ``--skip-proven`` reads (``proofs``).
 """
 
 from ._version import __version__

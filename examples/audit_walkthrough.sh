@@ -18,12 +18,13 @@ DATADIR=$(mktemp -d)
 PORT=$(.venv/bin/python -m bip322audit.testing port)
 CLI="$CORE/bin/bitcoin-cli -regtest -datadir=$DATADIR -rpcport=$PORT -rpcuser=demo -rpcpassword=demo"
 DEV=.venv/bin/bip322-dev; AUDIT=.venv/bin/bip322-audit
+export BIP322_DIR="$WORK/bip322"   # the data directory for this run: ~/bip322 in real life, with one directory per wallet
 step() { printf '\n\033[1m=== %s ===\033[0m\n' "$*"; }
 run() { printf '$ %s\n' "$*" >&2; "$@"; }
 cleanup() { $CLI stop >/dev/null 2>&1 || true; sleep 1; rm -rf "$DATADIR"; }
 trap cleanup EXIT
 
-# no -txindex: verify fetches a spent output's transactions by the block hashes the bundle records
+# no -txindex: verify fetches a spent output's transactions by the block hashes the snapshot records
 step "0. a private regtest node with a wallet"
 "$CORE/bin/bitcoind" -regtest -datadir="$DATADIR" -rpcport=$PORT -rpcuser=demo -rpcpassword=demo -listen=0 -connect=0 -fallbackfee=0.0001 -daemonwait >/dev/null
 $CLI createwallet miner >/dev/null; MINE=$($CLI -rpcwallet=miner getnewaddress); $CLI -rpcwallet=miner generatetoaddress 101 "$MINE" >/dev/null
@@ -50,22 +51,23 @@ $CLI -rpcwallet=miner sendtoaddress "$A0" 0.5 >/dev/null; $CLI -rpcwallet=miner 
 $CLI -rpcwallet=miner generatetoaddress 7 "$MINE" >/dev/null
 $CLI -rpcwallet=watch listunspent 1 | .venv/bin/python -c "import json,sys;[print(u['address'], u['amount'], 'conf', u['confirmations']) for u in json.load(sys.stdin)]"
 
-step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address"
-run $AUDIT --cli "$CLI" -w watch snapshot --text "Annual audit {date}" -o "$WORK/bundle"
-cat "$WORK/bundle/message.txt"; echo; ls "$WORK/bundle"
+step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address, into \$BIP322_DIR/watch/snapshots/"
+SNAP=$(run $AUDIT --cli "$CLI" -w watch snapshot --text "Annual audit {date}")
+cat "$SNAP/message.txt"; echo; ls "$SNAP"
 
-step "4. cosigners A and C sign every PSBT (hardware signers in real life), results go to bundle/signed/"
-for P in "$WORK"/bundle/to_sign/*.psbt; do
+step "4. cosigners A and C sign every PSBT (hardware signers in real life), results go to the snapshot's signed/"
+for P in "$SNAP"/to_sign/*.psbt; do
   N=$(basename "$P" .psbt)
-  $DEV signpsbt "$P" "$WORK/cosigner-A.json" -o "$WORK/bundle/signed/$N-A-part.psbt"
-  $DEV signpsbt "$P" "$WORK/cosigner-C.json" -o "$WORK/bundle/signed/$N-C-part.psbt"
+  $DEV signpsbt "$P" "$WORK/cosigner-A.json" -o "$SNAP/signed/$N-A-part.psbt"
+  $DEV signpsbt "$P" "$WORK/cosigner-C.json" -o "$SNAP/signed/$N-C-part.psbt"
 done
 
-step "5. finalize into proofs.json (combines the partial signatures, self-verifies, records spends since the snapshot: none yet)"
-run $AUDIT --cli "$CLI" finalize "$WORK/bundle"
+step "5. finalize the wallet's newest snapshot into its proofs file (combines the partial signatures, self-verifies, records spends since the snapshot: none yet)"
+PROOFS=$(run $AUDIT --cli "$CLI" -w watch finalize)
+echo "$PROOFS"
 
-step "6. the auditor verifies against their own node"
-run $AUDIT --cli "$CLI" verify "$WORK/bundle" --report "$WORK/report.json"
+step "6. the auditor verifies the proofs file against their own node"
+run $AUDIT --cli "$CLI" verify "$PROOFS" --report "$WORK/report.json"
 
 step "7. a coin is spent after the snapshot: verify cannot tell when, and says INCOMPLETE (exit 3) until the owner records the spend"
 CHANGE=$(.venv/bin/bip322 -w "$WORK/wallet.desc" --network regtest deriveaddresses 5 --change)
@@ -83,11 +85,11 @@ PY
 )
 SIGNED=$($CLI descriptorprocesspsbt "$FUNDED" "$PRIV" | .venv/bin/python -c "import json,sys;d=json.load(sys.stdin);assert d['complete'];print(d['hex'])")
 $CLI sendrawtransaction "$SIGNED" >/dev/null; $CLI -rpcwallet=miner generatetoaddress 1 "$MINE" >/dev/null
-RC=0; run $AUDIT --cli "$CLI" verify "$WORK/bundle" || RC=$?
+RC=0; run $AUDIT --cli "$CLI" verify "$PROOFS" || RC=$?
 [ "$RC" = 3 ] || { echo "expected exit 3 (incomplete), got $RC" >&2; exit 1; }
 
-step "8. the owner re-runs finalize: proofs.json now records the spend, and the auditor sees the coin was unspent at the snapshot"
-run $AUDIT --cli "$CLI" finalize "$WORK/bundle"
-run $AUDIT --cli "$CLI" verify "$WORK/bundle"
+step "8. the owner re-runs finalize: the proofs file now records the spend, and the auditor sees the coin was unspent at the snapshot"
+run $AUDIT --cli "$CLI" -w watch finalize
+run $AUDIT --cli "$CLI" verify "$PROOFS"
 
 step "done - artifacts in $WORK"

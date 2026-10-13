@@ -1,9 +1,11 @@
 """The data directory: one tree for every wallet, in which the tools name everything.
 
-``~/bip322``, unless ``--dir`` or ``BIP322_DIR`` says otherwise (or ``~/bip322`` is a symlink)::
+``bip322 init`` makes a directory the data directory by writing ``bip322.toml`` into
+it, and a command run in it or anywhere below finds it, as git finds its repository;
+``--dir`` or ``BIP322_DIR`` name one from elsewhere.  There is no default place::
 
-    ~/bip322/
-      config.toml                           the one configuration file
+    <dir>/
+      bip322.toml                           the mark of the directory, and the one configuration file
       <wallet>/snapshots/<date>-<height>/   one round of proofs: snapshot.json, message.txt, to_sign/, signed/,
                                             and once finalized <wallet>-<date>-<height>-proofs.json
       <wallet>/statements/<label>/          a statement: <wallet>-<label>.pdf (or .html), .json, .csv,
@@ -12,9 +14,10 @@
 A directory is named for its place: the tree supplies the wallet and the
 kind, so the names stay bare.  A file that leaves the tree, a proofs file or
 a statement's file, is named for its life, ``<wallet>-<when>-<kind>``, and
-keeps that one name at home, in a statement and at the auditor's.
+keeps that one name at home, in a statement and at the auditor's.  Inside a
+wallet's directory that wallet is the one meant (:func:`wallet_of_cwd`).
 
-``config.toml`` holds defaults for every wallet at the top level and, in a
+``bip322.toml`` holds defaults for every wallet at the top level and, in a
 ``[wallets.NAME]`` table, for one; the command line beats both.  ``init``
 writes it with every key shown (:func:`write_config`)::
 
@@ -34,13 +37,13 @@ import json
 import os
 import re
 import tomllib
-from collections.abc import Sequence
 from pathlib import Path
 
 __all__ = [
     "Config",
     "ConfigError",
     "data_dir",
+    "find_data_dir",
     "newest_snapshot",
     "only_wallet",
     "proofs_file_in",
@@ -51,24 +54,40 @@ __all__ = [
     "statements_dir",
     "use_data_dir",
     "wallet_dir",
+    "wallet_of_cwd",
     "wallets",
     "write_config",
 ]
 
-DEFAULT_DIR = "~/bip322"
-CONFIG_FILE = "config.toml"
+CONFIG_FILE = "bip322.toml"
 
 
 class ConfigError(Exception):
-    """``config.toml`` cannot be read or says something the tools cannot use; or a name that fits no directory."""
+    """``bip322.toml`` cannot be read or says something the tools cannot use; no data directory; or a name that fits no directory."""
 
 
 _chosen: Path | None = None  # --dir
 
 
+def find_data_dir() -> Path | None:
+    """``--dir``, else ``$BIP322_DIR``, else the nearest directory at or above the current one with a ``bip322.toml``; None when there is none."""
+    if _chosen is not None:
+        return _chosen
+    env = os.environ.get("BIP322_DIR")
+    if env:
+        return Path(env).expanduser()
+    here = Path.cwd()
+    return next((p for p in (here, *here.parents) if (p / CONFIG_FILE).is_file()), None)
+
+
 def data_dir() -> Path:
-    """``--dir``, else ``$BIP322_DIR``, else ``~/bip322``; it need not exist yet."""
-    return _chosen or Path(os.environ.get("BIP322_DIR") or DEFAULT_DIR).expanduser()
+    """The data directory a command works in; an error when there is none."""
+    found = find_data_dir()
+    if found is None:
+        raise ConfigError(
+            f"not in a bip322 directory: no {CONFIG_FILE} in {Path.cwd()} or above (bip322 init makes one; --dir DIR names one elsewhere)"
+        )
+    return found
 
 
 def use_data_dir(path: str | os.PathLike | None) -> None:
@@ -78,7 +97,7 @@ def use_data_dir(path: str | os.PathLike | None) -> None:
 
 
 class Config:
-    """``config.toml``, parsed: top-level keys are defaults for every wallet, ``[wallets.NAME]`` keys for one."""
+    """``bip322.toml``, parsed: top-level keys are defaults for every wallet, ``[wallets.NAME]`` keys for one."""
 
     def __init__(self, data: dict | None = None, path: Path | None = None):
         self.data = data or {}
@@ -89,9 +108,10 @@ class Config:
 
     @classmethod
     def load(cls, directory: Path | None = None) -> Config:
-        """The data directory's ``config.toml``; an empty configuration when there is none."""
-        path = (directory or data_dir()) / CONFIG_FILE
-        if not path.is_file():
+        """The data directory's ``bip322.toml``; an empty configuration when there is no file, or no data directory."""
+        root = directory or find_data_dir()
+        path = root / CONFIG_FILE if root is not None else None
+        if path is None or not path.is_file():
             return cls({}, path)
         try:
             return cls(tomllib.loads(path.read_text()), path)
@@ -123,14 +143,19 @@ class Config:
         return node_wallet
 
 
-def wallet_dir(wallet: str) -> Path:
-    """``~/bip322/<wallet>``; refuses a name that is not a plain directory name (Core's default wallet is named "")."""
+def check_wallet_name(wallet: str) -> str:
+    """``wallet`` when it is a plain directory name; an error otherwise (Core's default wallet is named "")."""
     if not wallet or wallet in (".", "..") or wallet.startswith(".") or "/" in wallet or "\\" in wallet:
         raise ConfigError(
             f"{wallet!r} is not usable as a directory name: name the wallet with -w NAME and map it to the node wallet "
             f"with node = {wallet!r} in its [wallets.NAME] table of {CONFIG_FILE}"
         )
-    return data_dir() / wallet
+    return wallet
+
+
+def wallet_dir(wallet: str) -> Path:
+    """``<dir>/<wallet>``."""
+    return data_dir() / check_wallet_name(wallet)
 
 
 def snapshots_dir(wallet: str) -> Path:
@@ -181,10 +206,23 @@ def snapshot_name(stamp: dict) -> str:
 
 def wallet_of_directory(directory: Path) -> str | None:
     """The wallet a snapshot directory belongs to by its place in the tree (``<wallet>/snapshots/<name>``); None elsewhere."""
+    root = find_data_dir()
     directory = directory.resolve()
-    if directory.parent.name == "snapshots" and directory.parent.parent.parent == data_dir().resolve():
+    if root is not None and directory.parent.name == "snapshots" and directory.parent.parent.parent == root.resolve():
         return directory.parent.parent.name
     return None
+
+
+def wallet_of_cwd() -> str | None:
+    """The wallet whose directory the current directory is, or is under (``<dir>/<wallet>/...``); None at the top or outside."""
+    root = find_data_dir()
+    if root is None:
+        return None
+    try:
+        parts = Path.cwd().resolve().relative_to(root.resolve()).parts
+    except ValueError:
+        return None
+    return parts[0] if parts and not parts[0].startswith(".") else None
 
 
 def _stamp_height(directory: Path) -> tuple[int, str]:
@@ -216,14 +254,14 @@ def snapshot_directory(given: str | None, wallet: str | None, *, finalized: bool
             return snapshots_dir(wallet) / given
         raise ConfigError(f"{given}: no such snapshot" + (f" (not a path, and not under {snapshots_dir(wallet)})" if wallet else ""))
     if wallet is None:
-        raise ConfigError("which snapshot? name one, or the wallet with -w NAME (or wallet = NAME in config.toml) for its newest")
+        raise ConfigError(f"which snapshot? name one, or the wallet with -w NAME (or wallet = NAME in {CONFIG_FILE}) for its newest")
     return newest_snapshot(wallet, finalized=finalized)
 
 
 _SAMPLE_HEAD = """\
-# bip322: one configuration file for every wallet under this directory.
-# Top-level keys are defaults for every wallet; a [wallets.NAME] table
-# overrides them for one wallet; the command line beats both.
+# bip322.toml: this is the bip322 directory, one directory per wallet inside;
+# a command run here or below finds it. Top-level keys are defaults for every
+# wallet; a [wallets.NAME] table overrides them for one; the command line beats both.
 """
 _SAMPLE_KEYS = (
     ('cli = "bitcoin-cli"', 'e.g. "bitcoin-cli -rpcconnect=10.0.0.5" or "bitcoin-cli -signet"'),
@@ -247,9 +285,9 @@ def _key(name: str) -> str:
     return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
 
 
-def sample_config(wallets: Sequence[str] = ()) -> str:
-    """``config.toml`` with every key the tools read: ``wallet`` and a table per name in ``wallets`` switched on, the rest comments to switch on."""
-    names, on = (list(wallets), True) if wallets else (["treasury", "personal"], False)
+def sample_config(wallet: str | None = None) -> str:
+    """``bip322.toml`` with every key the tools read: ``wallet`` and its table switched on when one is named, else every line a comment."""
+    names, on = ([wallet], True) if wallet is not None else (["treasury", "personal"], False)
     lines = [_SAMPLE_HEAD, _row(f"wallet = {json.dumps(names[0])}", "the default -w: the directory, and the node wallet of that name", on)]
     lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
     for name in names:
@@ -262,14 +300,21 @@ def sample_config(wallets: Sequence[str] = ()) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_config(wallets: Sequence[str] = ()) -> Path:
-    """Write :func:`sample_config` as ``config.toml`` into the data directory (created if need be); an existing file is left alone."""
-    for name in wallets:
-        wallet_dir(name)  # a usable directory name, or ConfigError
-    path = data_dir() / CONFIG_FILE
+def write_config(directory: Path, wallet: str | None = None) -> Path:
+    """Make ``directory`` the data directory: write :func:`sample_config` as its ``bip322.toml``, creating the directory if need be.
+
+    An existing file is left alone, and a directory inside a data directory already is refused.
+    """
+    if wallet is not None:
+        check_wallet_name(wallet)
+    directory = directory.resolve()
+    path = directory / CONFIG_FILE
     if path.exists():
         raise ConfigError(f"{path} exists already: edit it, or move it away first")
-    path.parent.mkdir(parents=True, exist_ok=True)
+    above = next((p for p in directory.parents if (p / CONFIG_FILE).is_file()), None)
+    if above is not None:
+        raise ConfigError(f"{directory} is inside the bip322 directory {above} already")
+    directory.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as f:
-        f.write(sample_config(wallets))
+        f.write(sample_config(wallet))
     return path

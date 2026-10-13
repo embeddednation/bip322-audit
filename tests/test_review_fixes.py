@@ -12,7 +12,7 @@ from test_audit import T0, FakeCli, _signed_snapshot, fake_hash
 
 import bip322audit.cli as audit_cli
 from bip322audit.audit import AuditError, finalize_snapshot, format_report, verify_proofs
-from bip322audit.datadir import Config, data_dir, proofs_file_in, snapshots_dir
+from bip322audit.datadir import Config, data_dir, proofs_file_in, snapshots_dir, wallet_of_cwd
 from bip322audit.holdings import holdings
 from bip322audit.proofs import find_proofs, proven_addresses
 from bip322audit.rpc import BitcoinCli, RpcError
@@ -452,12 +452,22 @@ def test_cli_quoting_and_timeout(wallet, funded, monkeypatch, capsys):
         slow.call("1")
 
 
-def test_init_writes_a_config_the_tools_read(tmp_path, capsys):
-    """init: config.toml with every key, in the data directory; names switch wallet and tables on; never over an existing file."""
-    assert audit_cli.main(["init"]) == 0
-    path = Path(capsys.readouterr().out.strip())
-    assert path == data_dir() / "config.toml" and tomllib.loads(path.read_text()) == {}  # every line a comment
-    switched_on = re.sub(r"^# (?=[a-z]+ = |\[)", "", path.read_text(), flags=re.M)
+def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tmp_path, monkeypatch, capsys):
+    """Like git: init writes bip322.toml here (or in DIR); a command run below finds it; outside any, one line says so."""
+    monkeypatch.delenv("BIP322_DIR")
+    monkeypatch.chdir(tmp_path)
+    assert audit_cli.main(["finalize"]) == 2 and "not in a bip322 directory" in capsys.readouterr().err
+    other = tmp_path / "other"  # a directory given, made for it, with the wallet switched on
+    assert audit_cli.main(["init", "other", "-w", "my wallet"]) == 0 and capsys.readouterr().out.strip() == str(other / "bip322.toml")
+    config = Config.load(other)
+    assert config.get("wallet") == "my wallet" and set(config.wallets) == {"my wallet"} and config.node_wallet("my wallet") == "my wallet"
+    assert audit_cli.main(["init", "x", "-w", "../x"]) == 2 and "not usable as a directory name" in capsys.readouterr().err
+    assert not (tmp_path / "x").exists()
+    # the current directory, with every line a comment
+    assert audit_cli.main(["init"]) == 0 and capsys.readouterr().out.strip() == str(tmp_path / "bip322.toml")
+    written = (tmp_path / "bip322.toml").read_text()
+    assert tomllib.loads(written) == {}
+    switched_on = re.sub(r"^# (?=[a-z]+ = |\[)", "", written, flags=re.M)
     assert set(tomllib.loads(switched_on)) == {
         "wallet",
         "cli",
@@ -471,19 +481,16 @@ def test_init_writes_a_config_the_tools_read(tmp_path, capsys):
         "wallets",
     }
     assert audit_cli.main(["init"]) == 2 and "exists already" in capsys.readouterr().err
-    other = tmp_path / "other"
-    assert audit_cli.main(["init", "treasury", "my wallet", "--dir", str(other)]) == 0
-    assert capsys.readouterr().out.strip() == str(other / "config.toml")
-    config = Config.load(other)
-    assert (
-        config.get("wallet") == "treasury"
-        and set(config.wallets) == {"treasury", "my wallet"}
-        and config.node_wallet("treasury") == "treasury"
-    )
-    assert (
-        audit_cli.main(["--dir", str(tmp_path / "x"), "init", "../x"]) == 2 and "not usable as a directory name" in capsys.readouterr().err
-    )
-    assert not (tmp_path / "x").exists()
+    # from below: the directory is found, the wallet is the one the command runs in, and so is the snapshot
+    below = tmp_path / "treasury" / "snapshots" / "2026-01-01-1"
+    below.mkdir(parents=True)
+    monkeypatch.chdir(below)
+    assert data_dir() == tmp_path and wallet_of_cwd() == "treasury" and Config.load().path == tmp_path / "bip322.toml"
+    assert audit_cli.main(["init"]) == 2 and "inside the bip322 directory" in capsys.readouterr().err
+    assert audit_cli.main(["verify"]) == 2 and f"no finalized snapshot under {below.parent}" in capsys.readouterr().err
+    (below / "snapshot.json").write_text("{}")
+    assert audit_cli.main(["verify"]) == 2 and "no proofs file" in capsys.readouterr().err
+    assert audit_cli.main(["finalize"]) == 2 and "not a snapshot.json" in capsys.readouterr().err  # one line, not a KeyError
 
 
 def test_wallet_and_dir_go_before_or_after_any_command(tmp_path, wallet, funded, monkeypatch, capsys):

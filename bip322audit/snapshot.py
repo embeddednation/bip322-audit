@@ -520,4 +520,8 @@ def write_snapshot(directory: Path, snapshot: Snapshot, psbts: dict[str, object]
 
 def load_snapshot(directory: Path) -> dict:
     """``snapshot.json`` of a snapshot directory, as written by :func:`write_snapshot`."""
-    return json.loads((directory / "snapshot.json").read_text())
+    path = directory / "snapshot.json"
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or not isinstance(data.get("stamp"), dict) or not isinstance(data.get("addresses"), list):
+        raise ValueError(f"{path}: not a snapshot.json (no stamp and addresses)")
+    return data

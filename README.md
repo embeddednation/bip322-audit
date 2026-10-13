@@ -11,7 +11,7 @@ Two roles:
 
 * **Owner**: `snapshot` (or `prove`, for given addresses), sign on the
   cosigners' devices, `finalize`. Needs a node with the wallet loaded
-  (watch-only is enough). Everything lands under `~/bip322/<wallet>/snapshots/`.
+  (watch-only is enough). Everything lands under `<wallet>/snapshots/` in the directory `bip322 init` made.
 * **Auditor**: `verify`, against any node that has the chain; `holdings` to
   look up single outputs or addresses. No wallet, no index, no key material,
   and nothing about the owner's wallet beyond the proven addresses.
@@ -53,15 +53,16 @@ The whole yearly flow across the three packages is in bip322-report's [handbook]
 For "we controlled these coins as of block N", repeatable whenever coins move:
 
 ```sh
+bip322 init -w treasury               # once: this directory holds the wallets (bip322.toml)
 bip322 audit snapshot                 # the node wallet's own descriptor
-#   -> ~/bip322/treasury/snapshots/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
+#   -> treasury/snapshots/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
 #   sign every PSBT on the cosigners' devices, put the results into its signed/
 bip322 audit finalize                 # the newest snapshot -> treasury-2026-09-14-912345-proofs.json (hand this to the auditor)
 bip322 audit verify --report audit-report.json
 ```
 
-The wallet is `-w NAME`, else `wallet` in `~/bip322/config.toml`, else the
-node's one loaded wallet; `finalize` and `verify` take a snapshot's name
+The wallet is `-w NAME`, else the wallet directory the command runs in, else
+`wallet` in `bip322.toml`, else the node's one loaded wallet; `finalize` and `verify` take a snapshot's name
 (`finalize 2026-09-14-912345`) or a path when the newest is not the one
 meant, and `verify` a proofs file. `-o DIR` writes a snapshot elsewhere.
 See [Where everything lives](#where-everything-lives).
@@ -92,7 +93,7 @@ before it starts; `--source` forces either). The stamp, the coins, their
 heights and block hashes are read under one tip: if a block arrives
 meanwhile, they are read again. The template accepts `{date}`, `{time}`,
 `{height}`, `{hash}` (date and time are the stamp block's header time, UTC;
-`text` in `config.toml` sets the default); anything else in braces is refused, as is a template with a `block:` line of
+`text` in `bip322.toml` sets the default); anything else in braces is refused, as is a template with a `block:` line of
 its own, and the message is checked against hardware signers' message rules.
 
 `snapshot` covers one descriptor (`wsh(multi/sortedmulti)` or `wpkh`). Its
@@ -197,13 +198,20 @@ address may be given in upper case.
 
 ## Where everything lives
 
-One directory, `~/bip322`: one `config.toml`, and one directory per wallet,
-in which the tools name everything. To keep it elsewhere, give `--dir DIR`,
-set `BIP322_DIR`, or make `~/bip322` a symlink.
+A directory of your choice, made with `bip322 init` (the same as
+`bip322 audit init`): it writes `bip322.toml`, the file that marks the
+directory and holds the defaults, and from then on every command run in that
+directory or below finds it, as git finds its repository. There is no default
+place; `--dir DIR` or `BIP322_DIR` name it from elsewhere.
+
+```sh
+mkdir ~/bip322 && cd ~/bip322
+bip322 init -w treasury               # -> bip322.toml: wallet = "treasury", every other key a comment to switch on
+```
 
 ```
 ~/bip322/
-  config.toml
+  bip322.toml
   treasury/
     snapshots/
       2026-03-02-880412/                  # a prove during the year
@@ -215,14 +223,15 @@ set `BIP322_DIR`, or make `~/bip322` a symlink.
 
 `-w NAME` names the wallet: its directory, and the node wallet of the same
 name (or the one `node` names in its `[wallets.NAME]` table of
-`config.toml`, for a node wallet whose name is long or no directory name).
-Without `-w`, `wallet` in `config.toml` names it, else the node's one loaded
-wallet does. A second wallet is a second directory, created when first
-written to. The snapshots hold the PSBTs, which carry the wallet's xpubs:
-they stay with the holder.
+`bip322.toml`, for a node wallet whose name is long or no directory name).
+Without `-w`, the wallet directory the command runs in names it, else
+`wallet` in `bip322.toml`, else the node's one loaded wallet does; inside a
+snapshot's directory, `finalize` and `verify` mean that snapshot. A second
+wallet is a second directory, created when first written to. The snapshots
+hold the PSBTs, which carry the wallet's xpubs: they stay with the holder.
 
-`config.toml` is optional; its top-level keys are defaults for every wallet,
-a `[wallets.NAME]` table is for one, and the command line beats both:
+In `bip322.toml`, top-level keys are defaults for every wallet, a
+`[wallets.NAME]` table is for one, and the command line beats both:
 
 ```toml
 wallet = "treasury"
@@ -233,9 +242,8 @@ cli = "bitcoin-cli -rpcconnect=10.0.0.5"
 node = "treasury-2of3-main"
 ```
 
-`bip322 init treasury` (the same as `bip322 audit init`) writes the file with
-every key the tools read: each NAME given becomes a `[wallets.NAME]` table and
-the first the `wallet`; the rest are comments to switch on. An existing file
+`init` writes the file with every key the tools read as a comment to switch
+on, and `-w NAME` switches `wallet = NAME` and its table on. An existing file
 is left alone.
 
 Keys this package reads: `wallet`, `cli`, `timeout`, `text`, and `node` per
@@ -286,7 +294,7 @@ bip322audit/snapshot.py   coins at the stamp block (listunspent / scantxoutset),
 bip322audit/audit.py      finalize (combine, finalize, self-verify, record spends) and verify (the report)
 bip322audit/holdings.py   what outputs or addresses hold now, and at a block (holdings)
 bip322audit/proofs.py     the proofs files in a directory tree: which addresses and outputs earlier proofs cover
-bip322audit/datadir.py    ~/bip322: config.toml, the wallet directories, snapshot and proofs file names
+bip322audit/datadir.py    the data directory: bip322.toml, finding it from below, the wallet directories, snapshot and proofs file names
 bip322audit/rpc.py        bitcoin-cli as a subprocess
 bip322audit/cli.py        the bip322-audit command, and bip322-init (what bip322 init runs)
 bip322audit/testing.py    a throwaway regtest node for the regtest test and the walkthrough

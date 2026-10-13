@@ -18,7 +18,7 @@ DATADIR=$(mktemp -d)
 PORT=$(.venv/bin/python -m bip322audit.testing port)
 CLI="$CORE/bin/bitcoin-cli -regtest -datadir=$DATADIR -rpcport=$PORT -rpcuser=demo -rpcpassword=demo"
 DEV=.venv/bin/bip322-dev; AUDIT=.venv/bin/bip322-audit
-export BIP322_DIR="$WORK/bip322"   # the data directory for this run: ~/bip322 in real life, with one directory per wallet
+export BIP322_DIR="$WORK/bip322"   # the data directory for this run (in real life: cd into it and bip322 init)
 step() { printf '\n\033[1m=== %s ===\033[0m\n' "$*"; }
 run() { printf '$ %s\n' "$*" >&2; "$@"; }
 cleanup() { $CLI stop >/dev/null 2>&1 || true; sleep 1; rm -rf "$DATADIR"; }
@@ -52,7 +52,7 @@ $CLI -rpcwallet=miner generatetoaddress 7 "$MINE" >/dev/null
 $CLI -rpcwallet=watch listunspent 1 | .venv/bin/python -c "import json,sys;[print(u['address'], u['amount'], 'conf', u['confirmations']) for u in json.load(sys.stdin)]"
 
 step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address, into \$BIP322_DIR/watch/snapshots/"
-$AUDIT init watch                  # config.toml: wallet = "watch", every other key a comment to switch on
+$AUDIT init -w watch               # bip322.toml there: wallet = "watch", every other key a comment to switch on
 SNAP=$(run $AUDIT --cli "$CLI" -w watch snapshot --text "Annual audit {date}")
 cat "$SNAP/message.txt"; echo; ls "$SNAP"
 

@@ -5,8 +5,9 @@ run (bad input, a file or the node not reachable).  ``verify`` alone also has 1,
 result is FAILED, and 3, the result is INCOMPLETE: nothing failed, but the node did
 not show every listed output held at the stamp block.
 
-Everything is written under ``~/bip322/<wallet>/snapshots/`` (``--dir`` or ``BIP322_DIR``
-moves the tree); ``-w`` names the wallet, else ``config.toml`` does, else the node's one
+``init`` makes a directory the data directory, and a command run in it or below finds
+it (``--dir`` or ``BIP322_DIR`` name one from elsewhere).  ``-w`` names the wallet, else
+the wallet directory the command runs in does, else ``bip322.toml``, else the node's one
 loaded wallet is it.  ``-o`` writes elsewhere.
 """
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -28,7 +30,6 @@ from .audit import EXIT_CODES, AuditError, finalize_snapshot, format_report, loa
 from .datadir import (
     Config,
     ConfigError,
-    data_dir,
     only_wallet,
     proofs_file_in,
     proofs_file_name,
@@ -36,6 +37,7 @@ from .datadir import (
     snapshot_name,
     snapshots_dir,
     use_data_dir,
+    wallet_of_cwd,
     wallet_of_directory,
     write_config,
 )
@@ -66,16 +68,19 @@ def _opt(args, name: str):
 
 
 def _wallet_name(args, config: Config) -> str | None:
-    """The wallet as named by the owner: ``-w``, else ``wallet`` in config.toml; None when neither says."""
+    """The wallet as named by the owner: ``-w``, else the wallet directory the command runs in, else ``wallet`` in bip322.toml; None when none says."""
     given = _opt(args, "wallet")
     if given is not None:
         return str(given)
+    here = wallet_of_cwd()
+    if here is not None:
+        return here
     named = config.get("wallet")
     return str(named) if named is not None else None
 
 
 def _cli(args, config: Config, *, node_wallet: str | None = None, wallet: str | None = None) -> BitcoinCli:
-    """The node as the options and config.toml describe it; ``node_wallet`` is passed as ``-rpcwallet`` when given."""
+    """The node as the options and bip322.toml describe it; ``node_wallet`` is passed as ``-rpcwallet`` when given."""
     cli = BitcoinCli(_opt(args, "cli") or config.get("cli", wallet) or "bitcoin-cli")
     if node_wallet is not None:
         cli.argv.append(f"-rpcwallet={node_wallet}")
@@ -123,7 +128,7 @@ def _snapshot_destination(output: str | None, force: bool, parent: Path | None, 
             _check_may_rewrite(directory, force)
         return directory
     if parent is None:
-        raise CLIError("no wallet to file the snapshot under: name it with -w NAME (or wallet = NAME in config.toml), or give -o DIR")
+        raise CLIError("no wallet to file the snapshot under: name it with -w NAME (or wallet = NAME in bip322.toml), or give -o DIR")
     directory, n = parent / name, 1
     while directory.exists():
         n += 1
@@ -147,7 +152,7 @@ def _proven(wallet: str | None, skip_proven: bool) -> set[str] | None:
     if not skip_proven:
         return None
     if wallet is None:
-        raise CLIError("--skip-proven reads the wallet's snapshots: name the wallet with -w NAME (or wallet = NAME in config.toml)")
+        raise CLIError("--skip-proven reads the wallet's snapshots: name the wallet with -w NAME (or wallet = NAME in bip322.toml)")
     unreadable: list = []
     proven = proven_addresses([snapshots_dir(wallet)], skipped=unreadable)
     for path, reason in unreadable:
@@ -156,7 +161,8 @@ def _proven(wallet: str | None, skip_proven: bool) -> set[str] | None:
 
 
 def cmd_init(args) -> int:
-    print(write_config(args.wallets))
+    directory = Path(args.directory or _opt(args, "dir") or os.environ.get("BIP322_DIR") or os.curdir).expanduser()
+    print(write_config(directory, _opt(args, "wallet")))
     return 0
 
 
@@ -237,6 +243,8 @@ def _snapshot_to_work_on(args, config: Config, *, finalized: bool | None) -> tup
     """The snapshot directory a command was pointed at (or the wallet's newest), and the wallet it belongs to if known."""
     name = _wallet_name(args, config)
     given = getattr(args, "snapshot", None)
+    if given is None and Path("snapshot.json").is_file():
+        given = os.curdir  # run inside a snapshot's directory, the command means that snapshot
     if name is None and not (given and Path(given).exists()):
         name = only_wallet()  # the one wallet in the data directory needs no naming
     directory = snapshot_directory(given, name, finalized=finalized)
@@ -340,7 +348,7 @@ def _add_global_args(parser: argparse.ArgumentParser) -> None:
         "--cli",
         default=None,
         metavar="CMD",
-        help='how to reach the node, e.g. "bitcoin-cli -signet" or "bitcoin-cli -rpcconnect=10.0.0.5" (default: bitcoin-cli, or cli in config.toml). '
+        help='how to reach the node, e.g. "bitcoin-cli -signet" or "bitcoin-cli -rpcconnect=10.0.0.5" (default: bitcoin-cli, or cli in bip322.toml). '
         "CMD is split like a shell command line, so quote a path that contains spaces inside it: "
         """--cli "'/opt/my node/bitcoin-cli' -signet\"""",
     )
@@ -356,14 +364,16 @@ def _add_global_args(parser: argparse.ArgumentParser) -> None:
         "-w",
         default=None,
         metavar="NAME",
-        help=f"the wallet: its directory {data_dir()}/NAME, and the node wallet of that name (or the one its [wallets.NAME] table "
-        "names as node). Default: wallet in config.toml, else the node's one loaded wallet. May also follow the command.",
+        help="the wallet: its directory NAME in the data directory, and the node wallet of that name (or the one its [wallets.NAME] "
+        "table names as node). Default: the wallet directory the command runs in, else wallet in bip322.toml, else the node's one "
+        "loaded wallet. May also follow the command.",
     )
     parser.add_argument(
         "--dir",
         default=None,
         metavar="DIR",
-        help=f"the data directory (default {data_dir()}: BIP322_DIR in the environment, else ~/bip322). May also follow the command.",
+        help="the data directory (default: the nearest directory at or above the current one with a bip322.toml, or BIP322_DIR). "
+        "May also follow the command.",
     )
 
 
@@ -394,17 +404,17 @@ def _add_destination_args(p: argparse.ArgumentParser) -> None:
 def _add_init_parser(sub) -> None:
     p = sub.add_parser(
         "init",
-        help="write config.toml, with every key shown, into the data directory",
-        description=f"Write {data_dir()}/config.toml with every key the tools read, the data directory created if need be; "
-        "an existing file is left alone. Each NAME becomes a [wallets.NAME] table and the first the default wallet; "
-        "without names every line is a comment to switch on. bip322 init runs this too.",
+        help="make a directory the data directory: bip322.toml, with every key shown, written into it",
+        description="Make DIR (default: the current directory) the data directory by writing bip322.toml into it, with every key the "
+        "tools read as comments to switch on; -w NAME switches wallet = NAME and its [wallets.NAME] table on. The directory is "
+        "created if need be; an existing bip322.toml is left alone. From then on a command run in the directory or below finds "
+        "it, as git finds its repository. bip322 init runs this too.",
         epilog=EXIT_HELP,
     )
-    p.add_argument(
-        "wallets", metavar="NAME", nargs="*", help="a wallet: its directory under the data directory, and the node wallet of that name"
-    )
-    p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the data directory (may also be given before the command)")
-    p.set_defaults(func=cmd_init)
+    p.add_argument("directory", metavar="DIR", nargs="?", help="the directory (default: the current one, or --dir / BIP322_DIR when given)")
+    p.add_argument("--wallet", "-w", dest="wallet_sub", metavar="NAME", help="the default wallet: wallet = NAME and its table switched on")
+    p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the directory, as before the command")
+    p.set_defaults(func=cmd_init, examples=["init", "init ~/bip322 -w treasury"])
 
 
 def _add_stamp_parser(sub) -> None:
@@ -426,8 +436,8 @@ def _add_snapshot_parser(sub) -> None:
             "Take the snapshot: read the wallet descriptor from the node wallet (or --descriptor), choose the stamp block "
             "(tip - DEPTH), find the wallet's coins confirmed at that block "
             "(listunspent on the node wallet, or a scantxoutset of the descriptor), compose the message from the template "
-            f"plus the stamp line, and write snapshot.json, message.txt and to_sign/to_sign-NN.psbt per funded address into "
-            f"{data_dir()}/<wallet>/snapshots/<date>-<height>/ (the address of each PSBT is in snapshot.json). "
+            "plus the stamp line, and write snapshot.json, message.txt and to_sign/to_sign-NN.psbt per funded address into "
+            "<wallet>/snapshots/<date>-<height>/ in the data directory (the address of each PSBT is in snapshot.json). "
             "Sign the PSBTs on the cosigners' devices and put the results in its signed/."
         ),
     )
@@ -436,7 +446,7 @@ def _add_snapshot_parser(sub) -> None:
         p,
         descriptor="use this descriptor (a file or the text) instead of the node wallet's own; it must be one of the wallet's descriptors",
         text=f"message template; {{date}} {{time}} {{height}} {{hash}} are filled from the stamp block "
-        f"(default: text in config.toml, else '{DEFAULT_TEMPLATE}')",
+        f"(default: text in bip322.toml, else '{DEFAULT_TEMPLATE}')",
         depth=f"stamp/snapshot block is this many blocks behind the tip (default {DEFAULT_DEPTH})",
     )
     p.add_argument(
@@ -500,7 +510,7 @@ def _add_prove_parser(sub) -> None:
     _add_wallet_and_message_args(
         p,
         descriptor="use this descriptor instead of the node wallet's own",
-        text=f"message template (default: text in config.toml, else '{DEFAULT_TEMPLATE}')",
+        text=f"message template (default: text in bip322.toml, else '{DEFAULT_TEMPLATE}')",
         depth=f"stamp block is this many blocks behind the tip (default {DEFAULT_DEPTH})",
     )
     _add_psbt_args(p, max_index="derivation range to search per branch (default %(default)s)")
@@ -586,8 +596,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bip322-audit",
         description=f"Proof of control of a wallet's coins at a point in time: BIP-322 proofs plus on-chain checks through bitcoin-cli ({SPEC}). "
-        f"Snapshots and their proofs files live under {data_dir()}/<wallet>/snapshots/ (--dir or BIP322_DIR moves the tree); "
-        "config.toml there holds the defaults.",
+        "Snapshots and their proofs files live under <wallet>/snapshots/ in the data directory: the one bip322 init made at or "
+        "above the current directory (--dir or BIP322_DIR name another), whose bip322.toml holds the defaults.",
         epilog=EXIT_HELP + " verify: 0 the result is OK, 1 FAILED, 3 INCOMPLETE (nothing failed, but some listed output is not shown "
         "held at the stamp block).",
     )

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.0 (2026-10-13)
+
+Like git: `bip322 init [DIR]` makes a directory the data directory by writing
+`bip322.toml` into it (the file was `config.toml`, the directory `~/bip322`),
+and every command run in it or below finds it. There is no default directory
+any more; `--dir DIR` and `BIP322_DIR` still name one from elsewhere. Inside
+a wallet's directory that wallet is the one meant, and inside a snapshot's
+directory `finalize` and `verify` mean that snapshot. `init -w NAME` switches
+`wallet = NAME` and its table on; `init NAME…` is gone.
+
+Upgrading: `cd ~/bip322 && mv config.toml bip322.toml`.
+
 ## 0.14.0 (2026-10-13)
 
 - `init [NAME…]` writes `config.toml` into the data directory with every key

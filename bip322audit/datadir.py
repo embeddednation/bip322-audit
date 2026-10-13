@@ -15,7 +15,8 @@ a statement's file, is named for its life, ``<wallet>-<when>-<kind>``, and
 keeps that one name at home, in a statement and at the auditor's.
 
 ``config.toml`` holds defaults for every wallet at the top level and, in a
-``[wallets.NAME]`` table, for one; the command line beats both::
+``[wallets.NAME]`` table, for one; the command line beats both.  ``init``
+writes it with every key shown (:func:`write_config`)::
 
     wallet = "treasury"           # the default -w
     cli = "bitcoin-cli"
@@ -31,7 +32,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 
 __all__ = [
@@ -42,12 +45,14 @@ __all__ = [
     "only_wallet",
     "proofs_file_in",
     "proofs_file_name",
+    "sample_config",
     "snapshot_directory",
     "snapshots_dir",
     "statements_dir",
     "use_data_dir",
     "wallet_dir",
     "wallets",
+    "write_config",
 ]
 
 DEFAULT_DIR = "~/bip322"
@@ -213,3 +218,58 @@ def snapshot_directory(given: str | None, wallet: str | None, *, finalized: bool
     if wallet is None:
         raise ConfigError("which snapshot? name one, or the wallet with -w NAME (or wallet = NAME in config.toml) for its newest")
     return newest_snapshot(wallet, finalized=finalized)
+
+
+_SAMPLE_HEAD = """\
+# bip322: one configuration file for every wallet under this directory.
+# Top-level keys are defaults for every wallet; a [wallets.NAME] table
+# overrides them for one wallet; the command line beats both.
+"""
+_SAMPLE_KEYS = (
+    ('cli = "bitcoin-cli"', 'e.g. "bitcoin-cli -rpcconnect=10.0.0.5" or "bitcoin-cli -signet"'),
+    ("timeout = 600", "seconds to wait for a node call"),
+    ('text = "Proof of control {date}"', "the message; {date} {time} {height} {hash} of the stamp block"),
+    None,
+    ('holder = "Company AB"', "named in the statement's header"),
+    ("dust = 1000", "satoshi; received outputs at or below this are left out of the statement"),
+    ('theme = "journal"', "journal, paper, light or dark"),
+    ('heading = "underline"', "underline, tab, number or redrule; default per theme"),
+    ('explorer = "https://mempool.space"', '"" for no links; mainnet only by default'),
+)
+
+
+def _row(setting: str, note: str, on: bool = False) -> str:
+    return f"{'' if on else '# '}{setting}".ljust(38) + f"# {note}"
+
+
+def _key(name: str) -> str:
+    """``name`` as a TOML key: bare when it can be, quoted otherwise."""
+    return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+
+
+def sample_config(wallets: Sequence[str] = ()) -> str:
+    """``config.toml`` with every key the tools read: ``wallet`` and a table per name in ``wallets`` switched on, the rest comments to switch on."""
+    names, on = (list(wallets), True) if wallets else (["treasury", "personal"], False)
+    lines = [_SAMPLE_HEAD, _row(f"wallet = {json.dumps(names[0])}", "the default -w: the directory, and the node wallet of that name", on)]
+    lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
+    for name in names:
+        lines += [
+            "",
+            f"{'' if on else '# '}[wallets.{_key(name)}]",
+            _row(f'node = "{name}-2of3-main"', "the node wallet, when its name is not the directory's"),
+            _row('holder = "Company AB"', "a key given here beats the one above, for this wallet"),
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def write_config(wallets: Sequence[str] = ()) -> Path:
+    """Write :func:`sample_config` as ``config.toml`` into the data directory (created if need be); an existing file is left alone."""
+    for name in wallets:
+        wallet_dir(name)  # a usable directory name, or ConfigError
+    path = data_dir() / CONFIG_FILE
+    if path.exists():
+        raise ConfigError(f"{path} exists already: edit it, or move it away first")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as f:
+        f.write(sample_config(wallets))
+    return path

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.0 (2026-10-13)
+
+- `init [NAME…]` writes `config.toml` into the data directory with every key
+  the tools read: each NAME as a `[wallets.NAME]` table, the first as
+  `wallet`, the rest as comments to switch on. An existing file is left
+  alone. `bip322 init` runs it too (a `bip322-init` script).
+
 ## 0.13.1 (2026-10-12)
 
 - `--dir DIR` puts the tree elsewhere than `~/bip322` (as `BIP322_DIR` does).

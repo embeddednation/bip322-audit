@@ -1,4 +1,4 @@
-"""``bip322-audit``: snapshot, prove, finalize, verify, holdings (and stamp, help).
+"""``bip322-audit``: init, snapshot, prove, finalize, verify, holdings (and stamp, help).
 
 Exit codes, for every command: 0 done (for ``verify``: the result is OK), 2 could not
 run (bad input, a file or the node not reachable).  ``verify`` alone also has 1, the
@@ -37,6 +37,7 @@ from .datadir import (
     snapshots_dir,
     use_data_dir,
     wallet_of_directory,
+    write_config,
 )
 from .holdings import format_holdings, holdings
 from .proofs import proven_addresses
@@ -152,6 +153,11 @@ def _proven(wallet: str | None, skip_proven: bool) -> set[str] | None:
     for path, reason in unreadable:
         print(f"warning: {path} is not counted as proving anything: {reason}", file=sys.stderr)
     return proven
+
+
+def cmd_init(args) -> int:
+    print(write_config(args.wallets))
+    return 0
 
 
 def cmd_stamp(args) -> int:
@@ -385,6 +391,22 @@ def _add_destination_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--force", action="store_true", help="with -o: rewrite a snapshot that holds no signed PSBTs and no proofs file yet")
 
 
+def _add_init_parser(sub) -> None:
+    p = sub.add_parser(
+        "init",
+        help="write config.toml, with every key shown, into the data directory",
+        description=f"Write {data_dir()}/config.toml with every key the tools read, the data directory created if need be; "
+        "an existing file is left alone. Each NAME becomes a [wallets.NAME] table and the first the default wallet; "
+        "without names every line is a comment to switch on. bip322 init runs this too.",
+        epilog=EXIT_HELP,
+    )
+    p.add_argument(
+        "wallets", metavar="NAME", nargs="*", help="a wallet: its directory under the data directory, and the node wallet of that name"
+    )
+    p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the data directory (may also be given before the command)")
+    p.set_defaults(func=cmd_init)
+
+
 def _add_stamp_parser(sub) -> None:
     p = sub.add_parser(
         "stamp",
@@ -572,9 +594,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"{TOOL} ({SPEC})")
     _add_global_args(parser)
     sub = parser.add_subparsers(dest="command", required=True)
-    for add in (_add_stamp_parser, _add_snapshot_parser, _add_holdings_parser, _add_prove_parser, _add_finalize_parser, _add_verify_parser):
+    for add in (
+        _add_init_parser,
+        _add_stamp_parser,
+        _add_snapshot_parser,
+        _add_holdings_parser,
+        _add_prove_parser,
+        _add_finalize_parser,
+        _add_verify_parser,
+    ):
         add(sub)  # in the order the commands are listed by --help
-    add_help_command("bip322-audit", sub, {"Workflow": ["stamp", "snapshot", "prove", "finalize", "verify", "holdings", "help"]})
+    add_help_command(
+        "bip322-audit", sub, {"Setup": ["init"], "Workflow": ["stamp", "snapshot", "prove", "finalize", "verify", "holdings", "help"]}
+    )
     return parser
 
 
@@ -589,6 +621,11 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(f"error: {exc.strerror or exc}: {exc.filename}" if getattr(exc, "filename", None) else f"error: {exc}", file=sys.stderr)
         return 2
+
+
+def init_main() -> int:
+    """``bip322-init``, what ``bip322 init`` runs: ``bip322-audit init`` with the same arguments."""
+    return main(["init", *sys.argv[1:]])
 
 
 if __name__ == "__main__":  # pragma: no cover

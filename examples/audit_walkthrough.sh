@@ -52,6 +52,7 @@ $CLI -rpcwallet=miner generatetoaddress 7 "$MINE" >/dev/null
 $CLI -rpcwallet=watch listunspent 1 | .venv/bin/python -c "import json,sys;[print(u['address'], u['amount'], 'conf', u['confirmations']) for u in json.load(sys.stdin)]"
 
 step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address, into \$BIP322_DIR/watch/snapshots/"
+$AUDIT init watch                  # config.toml: wallet = "watch", every other key a comment to switch on
 SNAP=$(run $AUDIT --cli "$CLI" -w watch snapshot --text "Annual audit {date}")
 cat "$SNAP/message.txt"; echo; ls "$SNAP"
 

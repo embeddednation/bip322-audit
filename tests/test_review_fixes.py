@@ -1,8 +1,10 @@
 """Regression tests for the findings of the review before the first release (one test per finding)."""
 
 import json
+import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -10,7 +12,7 @@ from test_audit import T0, FakeCli, _signed_snapshot, fake_hash
 
 import bip322audit.cli as audit_cli
 from bip322audit.audit import AuditError, finalize_snapshot, format_report, verify_proofs
-from bip322audit.datadir import proofs_file_in, snapshots_dir
+from bip322audit.datadir import Config, data_dir, proofs_file_in, snapshots_dir
 from bip322audit.holdings import holdings
 from bip322audit.proofs import find_proofs, proven_addresses
 from bip322audit.rpc import BitcoinCli, RpcError
@@ -448,6 +450,40 @@ def test_cli_quoting_and_timeout(wallet, funded, monkeypatch, capsys):
     slow = BitcoinCli(["sleep", "5"], timeout=0.2)
     with pytest.raises(RpcError, match="timed out after 0.2s.*--timeout"):
         slow.call("1")
+
+
+def test_init_writes_a_config_the_tools_read(tmp_path, capsys):
+    """init: config.toml with every key, in the data directory; names switch wallet and tables on; never over an existing file."""
+    assert audit_cli.main(["init"]) == 0
+    path = Path(capsys.readouterr().out.strip())
+    assert path == data_dir() / "config.toml" and tomllib.loads(path.read_text()) == {}  # every line a comment
+    switched_on = re.sub(r"^# (?=[a-z]+ = |\[)", "", path.read_text(), flags=re.M)
+    assert set(tomllib.loads(switched_on)) == {
+        "wallet",
+        "cli",
+        "timeout",
+        "text",
+        "holder",
+        "dust",
+        "theme",
+        "heading",
+        "explorer",
+        "wallets",
+    }
+    assert audit_cli.main(["init"]) == 2 and "exists already" in capsys.readouterr().err
+    other = tmp_path / "other"
+    assert audit_cli.main(["init", "treasury", "my wallet", "--dir", str(other)]) == 0
+    assert capsys.readouterr().out.strip() == str(other / "config.toml")
+    config = Config.load(other)
+    assert (
+        config.get("wallet") == "treasury"
+        and set(config.wallets) == {"treasury", "my wallet"}
+        and config.node_wallet("treasury") == "treasury"
+    )
+    assert (
+        audit_cli.main(["--dir", str(tmp_path / "x"), "init", "../x"]) == 2 and "not usable as a directory name" in capsys.readouterr().err
+    )
+    assert not (tmp_path / "x").exists()
 
 
 def test_wallet_and_dir_go_before_or_after_any_command(tmp_path, wallet, funded, monkeypatch, capsys):

@@ -233,6 +233,11 @@ cli = "bitcoin-cli -rpcconnect=10.0.0.5"
 node = "treasury-2of3-main"
 ```
 
+`bip322 init treasury` (the same as `bip322 audit init`) writes the file with
+every key the tools read: each NAME given becomes a `[wallets.NAME]` table and
+the first the `wallet`; the rest are comments to switch on. An existing file
+is left alone.
+
 Keys this package reads: `wallet`, `cli`, `timeout`, `text`, and `node` per
 wallet; bip322-report reads more.
 
@@ -283,7 +288,7 @@ bip322audit/holdings.py   what outputs or addresses hold now, and at a block (ho
 bip322audit/proofs.py     the proofs files in a directory tree: which addresses and outputs earlier proofs cover
 bip322audit/datadir.py    ~/bip322: config.toml, the wallet directories, snapshot and proofs file names
 bip322audit/rpc.py        bitcoin-cli as a subprocess
-bip322audit/cli.py        the bip322-audit command
+bip322audit/cli.py        the bip322-audit command, and bip322-init (what bip322 init runs)
 bip322audit/testing.py    a throwaway regtest node for the regtest test and the walkthrough
 tests/                    fake-node tests (test_audit.py, test_review_fixes.py), the pin test, and an end-to-end test on a real regtest Bitcoin Core
 examples/audit_walkthrough.sh   the whole flow on a throwaway regtest node

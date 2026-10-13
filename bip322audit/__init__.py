@@ -3,6 +3,7 @@
 Everything that talks to a node lives here (through ``bitcoin-cli``); the
 ``bip322core`` package stays pure and is used as a library:
 
+* ``init``      ``config.toml`` with every key shown, to edit
 * ``snapshot``  stamp block, funded addresses, message, one BIP-322 PSBT per address
 * ``prove``     the same for given addresses, whether or not they hold coins yet
 * ``finalize``  collect the signed PSBTs, finalize, write the proofs file

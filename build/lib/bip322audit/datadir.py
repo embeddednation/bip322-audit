@@ -10,6 +10,7 @@ it, and a command run in it or anywhere below finds it, as git finds its reposit
                                             and once finalized <wallet>-<date>-<height>-proofs.json
       <wallet>/statements/<label>/          a statement: <wallet>-<label>.pdf (or .html), .json, .csv,
                                             and a copy of each proofs file it cites
+      holders/<holder>/<label>/             a holder's ledger over its wallets (bip322-report), named the same way
 
 A directory is named for its place: the tree supplies the wallet and the
 kind, so the names stay bare.  A file that leaves the tree, a proofs file or
@@ -44,6 +45,7 @@ __all__ = [
     "ConfigError",
     "data_dir",
     "find_data_dir",
+    "holder_dir",
     "newest_snapshot",
     "only_wallet",
     "proofs_file_in",
@@ -60,6 +62,7 @@ __all__ = [
 ]
 
 CONFIG_FILE = "bip322.toml"
+HOLDERS_DIR = "holders"  # the holders' statements (bip322-report), one directory per holder; not a wallet
 
 
 class ConfigError(Exception):
@@ -175,9 +178,17 @@ def statements_dir(wallet: str) -> Path:
 
 
 def wallets() -> list[str]:
-    """The wallets that have a directory in the data directory."""
+    """The wallets in the data directory: the directories holding a ``snapshots/`` or a ``statements/`` (a directory written
+    there for anything else, or ``holders/``, is not a wallet)."""
     root = data_dir()
-    return sorted(p.name for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")) if root.is_dir() else []
+    if not root.is_dir():
+        return []
+    return sorted(p.name for p in root.iterdir() if p.is_dir() and ((p / "snapshots").is_dir() or (p / "statements").is_dir()))
+
+
+def holder_dir(slug: str) -> Path:
+    """``holders/<slug>/`` in the data directory: where a holder's statements go (bip322-report), beside the wallets."""
+    return data_dir() / HOLDERS_DIR / check_wallet_name(slug)
 
 
 def only_wallet() -> str | None:
@@ -276,7 +287,7 @@ _SAMPLE_KEYS = (
     ("timeout = 600", "seconds to wait for a node call"),
     ('text = "Proof of control {date}"', "the message; {date} {time} {height} {hash} of the stamp block"),
     None,
-    ('holder = "Company AB"', "named in the statement's header"),
+    ('holder = "Company AB"', "the statement's header; wallets with one holder make one holder ledger"),
     ("dust = 1000", "satoshi; received outputs at or below this are left out of the statement"),
     ('theme = "journal"', "journal, paper, light or dark"),
     ('heading = "underline"', "underline, tab, number or redrule; default per theme"),

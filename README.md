@@ -219,6 +219,7 @@ bip322 init -w treasury               # -> bip322.toml: wallet = "treasury", eve
         snapshot.json  message.txt  to_sign/  signed/
         treasury-2026-09-14-912345-proofs.json
     statements/                           # bip322-report's
+  holders/                                # bip322-report's: one ledger per holder, over that holder's wallets
 ```
 
 `-w NAME` names the wallet: its directory, and the node wallet of the same

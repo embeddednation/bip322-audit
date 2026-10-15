@@ -628,3 +628,16 @@ def test_docs_name_every_command_module_and_exit_code():
         assert word in readme and word in design, word
     assert design.count("never imports") == 1  # the paragraph that said it twice
     assert "prove" in audit_cli.__doc__ and "holdings" in audit_cli.__doc__
+
+
+def test_the_holders_directory_is_not_a_wallet(tmp_path, monkeypatch):
+    from bip322audit.datadir import ConfigError, holder_dir, wallets
+
+    monkeypatch.setenv("BIP322_DIR", str(tmp_path))
+    (tmp_path / "treasury" / "snapshots").mkdir(parents=True)
+    (tmp_path / "cold" / "statements").mkdir(parents=True)
+    for name in ("holders", "notes", ".git"):  # written there for something else: not wallets
+        (tmp_path / name).mkdir()
+    assert wallets() == ["cold", "treasury"] and holder_dir("company-ab") == tmp_path / "holders" / "company-ab"
+    with pytest.raises(ConfigError, match="not usable as a directory name"):
+        holder_dir("../x")

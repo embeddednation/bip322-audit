@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0 (2026-10-15)
+
+- `holders/` in the data directory, beside the wallets, for bip322-report's
+  holder ledgers (`holder_dir`). A wallet is a directory holding a
+  `snapshots/` or a `statements/`: `wallets()` no longer takes any directory
+  written into the data directory for one. The sample's note on `holder`
+  says that the wallets with one holder make one holder ledger.
+
 ## 0.16.0 (2026-10-15)
 
 - `[addresses]` in `bip322.toml`: the wallet each address of someone else

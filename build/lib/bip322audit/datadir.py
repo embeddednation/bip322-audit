@@ -1,4 +1,4 @@
-"""The data directory: one tree for every wallet, in which the tools name everything.
+"""The data directory: one tree, holders above wallets, in which the tools name everything.
 
 ``bip322 init`` makes a directory the data directory by writing ``bip322.toml`` into
 it, and a command run in it or anywhere below finds it, as git finds its repository;
@@ -6,14 +6,17 @@ it, and a command run in it or anywhere below finds it, as git finds its reposit
 
     <dir>/
       bip322.toml                           the mark of the directory, and the one configuration file
-      <wallet>/snapshots/<date>-<height>/   one round of proofs: snapshot.json, message.txt, to_sign/, signed/,
-                                            and once finalized <wallet>-<date>-<height>-proofs.json
-      <wallet>/statements/<label>/          a statement: <wallet>-<label>.pdf (or .html), .json, .csv,
-                                            and a copy of each proofs file it cites
-      holders/<holder>/<label>/             a holder's ledger over its wallets (bip322-report), named the same way
+      <holder>/<wallet>/snapshots/<date>-<height>/   one round of proofs: snapshot.json, message.txt, to_sign/,
+                                                     signed/, and once finalized <wallet>-<date>-<height>-proofs.json
+      <holder>/<wallet>/statements/<label>/          a statement: <wallet>-<label>.pdf (or .html), .json, .csv,
+                                                     and a copy of each proofs file it cites
+      <holder>/statements/<label>/                   the holder's ledger over its wallets (bip322-report), named the same way
 
-A directory is named for its place: the tree supplies the wallet and the
-kind, so the names stay bare.  A file that leaves the tree, a proofs file or
+A directory is named for its place: the tree supplies the holder, the wallet
+and the kind, so the names stay bare.  A wallet's name is unique in the tree,
+so ``-w NAME`` finds it under whichever holder it is; a new wallet is made
+under ``-w KEY/NAME``'s holder, else the holder of the current directory, else
+``holder`` in ``bip322.toml``, else the tree's one holder.  A file that leaves the tree, a proofs file or
 a statement's file, is named for its life, ``<wallet>-<when>-<kind>``, and
 keeps that one name at home, in a statement and at the auditor's.  Inside a
 wallet's directory that wallet is the one meant (:func:`wallet_of_cwd`).
@@ -22,17 +25,17 @@ wallet's directory that wallet is the one meant (:func:`wallet_of_cwd`).
 ``[wallets.NAME]`` table, for one; the command line beats both.  ``init``
 writes it with every key shown (:func:`write_config`)::
 
+    holder = "company"            # the default holder: a new -w NAME is made in its directory
     wallet = "treasury"           # the default -w
     cli = "bitcoin-cli"
     text = "Proof of control {date}"
     dust = 1000
 
+    [holders.company]
+    name = "Company AB"           # the statements' header (default: the key)
+
     [wallets.treasury]
     node = "treasury-2of3-main"   # the node wallet, when its name is not the directory's
-
-    [holders.company]             # bip322 report holder company: one ledger over its wallets
-    name = "Company AB"
-    wallets = ["treasury", "cold"]
 """
 
 from __future__ import annotations
@@ -49,6 +52,11 @@ __all__ = [
     "data_dir",
     "find_data_dir",
     "holder_dir",
+    "holder_of_cwd",
+    "holder_of_wallet",
+    "holder_statements_dir",
+    "holders",
+    "name_wallet",
     "newest_snapshot",
     "only_wallet",
     "proofs_file_in",
@@ -58,14 +66,17 @@ __all__ = [
     "snapshots_dir",
     "statements_dir",
     "use_data_dir",
+    "use_holder",
     "wallet_dir",
+    "wallet_dirs",
     "wallet_of_cwd",
     "wallets",
     "write_config",
 ]
 
 CONFIG_FILE = "bip322.toml"
-HOLDERS_DIR = "holders"  # the holders' statements (bip322-report), one directory per holder; not a wallet
+RESERVED = ("snapshots", "statements")  # directory names the tree uses for its own: no wallet or holder may take them
+_NAME = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 class ConfigError(Exception):
@@ -117,24 +128,19 @@ class Config:
         self._check_holders(path)
 
     def _check_holders(self, path: Path | None) -> None:
-        """``[holders.KEY]``: a directory-safe key, ``wallets`` listing at least one, an optional ``name``; a wallet under one holder only."""
+        """``holder`` (the default holder) is a directory name; ``[holders.KEY]`` tables carry a string ``name`` at most."""
         where = path or CONFIG_FILE
+        default = self.data.get("holder")
+        if default is not None and (not isinstance(default, str) or not _NAME.fullmatch(default) or default in RESERVED):
+            raise ConfigError(f"{where}: holder = {default!r}: the default holder is its directory's name (letters, digits, - _ .)")
         holders = self.data.get("holders", {})
         if not isinstance(holders, dict) or not all(isinstance(v, dict) for v in holders.values()):
-            raise ConfigError(f"{where}: [holders] must hold one [holders.KEY] table per holder")
-        listed: dict[str, str] = {}
+            raise ConfigError(f"{where}: [holders] must hold one [holders.KEY] table per holder, KEY its directory's name")
         for key, table in holders.items():
-            if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
-                raise ConfigError(f"{where}: [holders.{key}]: the key is the holder's directory name: letters, digits, - and _ only")
-            names = table.get("wallets")
-            if not isinstance(names, list) or not names or not all(isinstance(w, str) and w for w in names):
-                raise ConfigError(f'{where}: [holders.{key}] needs wallets = ["NAME", ...], the wallet directories that are the holder\'s')
+            if not _NAME.fullmatch(key) or key in RESERVED:
+                raise ConfigError(f"{where}: [holders.{key}]: the key is the holder's directory name (letters, digits, - _ .)")
             if not isinstance(table.get("name", key), str):
                 raise ConfigError(f"{where}: [holders.{key}]: name must be a string, the holder's name as the statements put it")
-            for w in names:
-                if w in listed:
-                    raise ConfigError(f"{where}: wallet {w} is listed under two holders, {listed[w]} and {key}")
-                listed[w] = key
 
     @classmethod
     def load(cls, directory: Path | None = None) -> Config:
@@ -154,23 +160,20 @@ class Config:
 
     @property
     def holders(self) -> dict[str, dict]:
-        """``[holders.KEY]`` tables, each as ``{"name": ..., "wallets": [...]}``; ``name`` defaults to the key."""
-        return {
-            key: {"name": str(t.get("name", key)), "wallets": [str(w) for w in t["wallets"]]}
-            for key, t in self.data.get("holders", {}).items()
-        }
+        """``[holders.KEY]`` tables as they are (``name`` at most)."""
+        return self.data.get("holders", {})
 
-    def holder_of(self, wallet: str) -> str | None:
-        """The key of the holder whose table lists the wallet, None when none does."""
-        return next((key for key, h in self.holders.items() if wallet in h["wallets"]), None)
-
-    def holder_name(self, wallet: str | None) -> str | None:
-        """The holder's name for a wallet's statement: from the holder table listing it, else ``holder`` in its table or at the top."""
-        key = self.holder_of(wallet) if wallet is not None else None
-        if key is not None:
-            return self.holders[key]["name"]
-        value = self.get("holder", wallet)
+    @property
+    def default_holder(self) -> str | None:
+        """``holder``: the holder a new wallet is made under when nothing else says."""
+        value = self.data.get("holder")
         return str(value) if value is not None else None
+
+    def holder_name(self, key: str | None) -> str | None:
+        """The holder's name as the statements put it: ``name`` in its table, else the key itself."""
+        if key is None:
+            return None
+        return str(self.holders.get(key, {}).get("name", key))
 
     @property
     def addresses(self) -> dict[str, str]:
@@ -200,7 +203,7 @@ class Config:
 
 def check_wallet_name(wallet: str) -> str:
     """``wallet`` when it is a plain directory name; an error otherwise (Core's default wallet is named "")."""
-    if not wallet or wallet in (".", "..") or wallet.startswith(".") or "/" in wallet or "\\" in wallet:
+    if not wallet or wallet in (".", "..") or wallet.startswith(".") or "/" in wallet or "\\" in wallet or wallet in RESERVED:
         raise ConfigError(
             f"{wallet!r} is not usable as a directory name: name the wallet with -w NAME and map it to the node wallet "
             f"with node = {wallet!r} in its [wallets.NAME] table of {CONFIG_FILE}"
@@ -208,9 +211,115 @@ def check_wallet_name(wallet: str) -> str:
     return wallet
 
 
+_holder: str | None = None  # -w KEY/NAME: the holder a new wallet is made under, for the rest of the process
+
+
+def use_holder(key: str | None) -> None:
+    global _holder
+    _holder = check_wallet_name(key) if key is not None else None
+
+
+def name_wallet(given: str) -> str:
+    """``-w [KEY/]NAME``: the wallet's name, after taking the holder before the slash, if any, for :func:`use_holder`."""
+    holder, slash, wallet = given.rpartition("/")
+    if slash:
+        use_holder(holder)
+    return wallet
+
+
+def _tree_parts(directory: Path) -> tuple[str, ...] | None:
+    """The path of ``directory`` inside the data directory, as parts; None outside it or without one."""
+    root = find_data_dir()
+    if root is None:
+        return None
+    try:
+        return directory.resolve().relative_to(root.resolve()).parts
+    except ValueError:
+        return None
+
+
+def _is_wallet_dir(path: Path) -> bool:
+    return path.is_dir() and not path.name.startswith(".") and path.name not in RESERVED and any((path / r).is_dir() for r in RESERVED)
+
+
+def holders() -> list[str]:
+    """The holders in the data directory: the top-level directories holding a wallet directory or a ``statements/``; none outside a tree."""
+    root = find_data_dir()
+    if root is None or not root.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith(".") and ((p / "statements").is_dir() or any(_is_wallet_dir(q) for q in p.iterdir()))
+    )
+
+
+def wallet_dirs() -> dict[str, Path]:
+    """Every wallet in the tree, ``<dir>/<holder>/<wallet>``, by name; a name under two holders is an error."""
+    found: dict[str, Path] = {}
+    for holder in holders():
+        for path in sorted((data_dir() / holder).iterdir()):
+            if _is_wallet_dir(path):
+                if path.name in found:
+                    raise ConfigError(
+                        f"wallet {path.name} is under two holders, {found[path.name].parent.name} and {holder}: name them apart"
+                    )
+                found[path.name] = path
+    return found
+
+
+def wallets() -> list[str]:
+    """The wallets in the data directory, whichever holder they are under."""
+    return sorted(wallet_dirs())
+
+
+def holder_of_wallet(wallet: str) -> str | None:
+    """The holder whose directory holds the wallet; None for a wallet not in the tree yet."""
+    path = wallet_dirs().get(wallet)
+    return path.parent.name if path is not None else None
+
+
+def holder_of_cwd() -> str | None:
+    """The holder whose directory the current directory is, or is under; None at the top or outside."""
+    parts = _tree_parts(Path.cwd())
+    return parts[0] if parts and not parts[0].startswith(".") else None
+
+
+def current_holder() -> str:
+    """The holder a new wallet is made under: ``-w KEY/NAME``, else the current directory's holder, else ``holder`` in
+    ``bip322.toml``, else the tree's one holder; otherwise an error that says how to name one."""
+    if _holder is not None:
+        return _holder
+    here = holder_of_cwd()
+    if here is not None:
+        return here
+    named = Config.load().default_holder
+    if named is not None:
+        return named
+    found = holders()
+    if len(found) == 1:
+        return found[0]
+    raise ConfigError(
+        "which holder? a wallet lives under one: -w KEY/NAME, or holder = KEY in bip322.toml, or run inside the holder's directory"
+        + (f" (holders here: {', '.join(found)})" if found else "")
+    )
+
+
+def holder_dir(key: str) -> Path:
+    """``<dir>/<holder>``."""
+    return data_dir() / check_wallet_name(key)
+
+
+def holder_statements_dir(key: str) -> Path:
+    """``<dir>/<holder>/statements``: the holder's ledgers (bip322-report)."""
+    return holder_dir(key) / "statements"
+
+
 def wallet_dir(wallet: str) -> Path:
-    """``<dir>/<wallet>``."""
-    return data_dir() / check_wallet_name(wallet)
+    """``<dir>/<holder>/<wallet>``: where the wallet is, or where it will be made (:func:`current_holder`)."""
+    check_wallet_name(wallet)
+    found = wallet_dirs().get(wallet)
+    return found if found is not None else data_dir() / current_holder() / wallet
 
 
 def snapshots_dir(wallet: str) -> Path:
@@ -221,22 +330,9 @@ def statements_dir(wallet: str) -> Path:
     return wallet_dir(wallet) / "statements"
 
 
-def wallets() -> list[str]:
-    """The wallets in the data directory: the directories holding a ``snapshots/`` or a ``statements/`` (a directory written
-    there for anything else, or ``holders/``, is not a wallet)."""
-    root = data_dir()
-    if not root.is_dir():
-        return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir() and ((p / "snapshots").is_dir() or (p / "statements").is_dir()))
-
-
-def holder_dir(slug: str) -> Path:
-    """``holders/<slug>/`` in the data directory: where a holder's statements go (bip322-report), beside the wallets."""
-    return data_dir() / HOLDERS_DIR / check_wallet_name(slug)
-
-
 def only_wallet() -> str | None:
     """The one wallet in the data directory, when there is exactly one: what a command means when nothing names a wallet."""
+    data_dir()  # a command that needs a wallet needs the tree: outside one, say so rather than "which wallet?"
     found = wallets()
     return found[0] if len(found) == 1 else None
 
@@ -268,24 +364,17 @@ def snapshot_name(stamp: dict) -> str:
 
 
 def wallet_of_directory(directory: Path) -> str | None:
-    """The wallet a snapshot directory belongs to by its place in the tree (``<wallet>/snapshots/<name>``); None elsewhere."""
-    root = find_data_dir()
-    directory = directory.resolve()
-    if root is not None and directory.parent.name == "snapshots" and directory.parent.parent.parent == root.resolve():
-        return directory.parent.parent.name
-    return None
+    """The wallet a snapshot directory belongs to by its place in the tree (``<holder>/<wallet>/snapshots/<name>``); None elsewhere."""
+    parts = _tree_parts(directory)
+    return parts[1] if parts and len(parts) == 4 and parts[2] == "snapshots" and parts[1] not in RESERVED else None
 
 
 def wallet_of_cwd() -> str | None:
-    """The wallet whose directory the current directory is, or is under (``<dir>/<wallet>/...``); None at the top or outside."""
-    root = find_data_dir()
-    if root is None:
+    """The wallet whose directory the current directory is, or is under (``<dir>/<holder>/<wallet>/...``); None elsewhere."""
+    parts = _tree_parts(Path.cwd())
+    if not parts or len(parts) < 2 or parts[0].startswith(".") or parts[1].startswith(".") or parts[1] in RESERVED:
         return None
-    try:
-        parts = Path.cwd().resolve().relative_to(root.resolve()).parts
-    except ValueError:
-        return None
-    return parts[0] if parts and not parts[0].startswith(".") else None
+    return parts[1]
 
 
 def _stamp_height(directory: Path) -> tuple[int, str]:
@@ -322,9 +411,10 @@ def snapshot_directory(given: str | None, wallet: str | None, *, finalized: bool
 
 
 _SAMPLE_HEAD = """\
-# bip322.toml: this is the bip322 directory, one directory per wallet inside;
-# a command run here or below finds it. Top-level keys are defaults for every
-# wallet; a [wallets.NAME] table overrides them for one; the command line beats both.
+# bip322.toml: this is the bip322 directory: one directory per holder, one per
+# wallet inside it; a command run here or below finds it. Top-level keys are
+# defaults for every wallet; a [wallets.NAME] table overrides them for one; the
+# command line beats both.
 """
 _SAMPLE_KEYS = (
     ('cli = "bitcoin-cli"', 'e.g. "bitcoin-cli -rpcconnect=10.0.0.5" or "bitcoin-cli -signet"'),
@@ -347,12 +437,22 @@ def _key(name: str) -> str:
     return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
 
 
-def sample_config(wallet: str | None = None) -> str:
-    """``bip322.toml`` with every key the tools read, ``[holders.KEY]`` and ``[addresses]``: ``wallet`` and its table switched on when one is
-    named, else every line a comment."""
+def sample_config(holder: str | None = None, wallet: str | None = None) -> str:
+    """``bip322.toml`` with every key the tools read, ``[holders.KEY]`` and ``[addresses]``: ``holder``, ``wallet`` and their tables
+    switched on when given, else every line a comment."""
+    key, holder_on = (holder, True) if holder is not None else ("company", False)
     names, on = ([wallet], True) if wallet is not None else (["treasury", "personal"], False)
-    lines = [_SAMPLE_HEAD, _row(f"wallet = {json.dumps(names[0])}", "the default -w: the directory, and the node wallet of that name", on)]
+    lines = [
+        _SAMPLE_HEAD,
+        _row(f"holder = {json.dumps(key)}", "the default holder: the directory a new -w NAME is made in", holder_on),
+        _row(f"wallet = {json.dumps(names[0])}", "the default -w: the wallet directory, and the node wallet of that name", on),
+    ]
     lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
+    lines += [
+        "",
+        f"{'' if holder_on else '# '}[holders.{_key(key)}]".ljust(38) + "# the holder: bip322 report holder, one ledger over its wallets",
+        _row('name = "Company AB"', "the statements' header (default: the key)"),
+    ]
     for name in names:
         lines += [
             "",
@@ -362,21 +462,19 @@ def sample_config(wallet: str | None = None) -> str:
         ]
     lines += [
         "",
-        _row("[holders.company]", "a holder: bip322 report holder company, one ledger over its wallets"),
-        _row('name = "Company AB"', "the statements' header"),
-        _row(f"wallets = {json.dumps(names)}", "the wallet directories that are the holder's"),
-        "",
         _row("[addresses]", "the other side of a movement, named in the statement's CSV"),
         _row('"bc1q..." = "Exchange"', "an address of theirs = the wallet it belongs to"),
     ]
     return "\n".join(lines) + "\n"
 
 
-def write_config(directory: Path, wallet: str | None = None) -> Path:
+def write_config(directory: Path, holder: str | None = None, wallet: str | None = None) -> Path:
     """Make ``directory`` the data directory: write :func:`sample_config` as its ``bip322.toml``, creating the directory if need be.
 
     An existing file is left alone, and a directory inside a data directory already is refused.
     """
+    if holder is not None:
+        check_wallet_name(holder)
     if wallet is not None:
         check_wallet_name(wallet)
     directory = directory.resolve()
@@ -388,5 +486,5 @@ def write_config(directory: Path, wallet: str | None = None) -> Path:
         raise ConfigError(f"{directory} is inside the bip322 directory {above} already")
     directory.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as f:
-        f.write(sample_config(wallet))
+        f.write(sample_config(holder, wallet))
     return path

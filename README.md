@@ -206,49 +206,59 @@ place; `--dir DIR` or `BIP322_DIR` name it from elsewhere.
 
 ```sh
 mkdir ~/bip322 && cd ~/bip322
-bip322 init -w treasury               # -> bip322.toml: wallet = "treasury", every other key a comment to switch on
+bip322 init -w company/treasury       # -> bip322.toml: holder = "company", wallet = "treasury", every other key a comment
 ```
+
+Inside, one directory per holder, and one per wallet under it:
 
 ```
 ~/bip322/
   bip322.toml
-  treasury/
-    snapshots/
-      2026-03-02-880412/                  # a prove during the year
-      2026-09-14-912345/                  # a full snapshot
-        snapshot.json  message.txt  to_sign/  signed/
-        treasury-2026-09-14-912345-proofs.json
-    statements/                           # bip322-report's
-  holders/                                # bip322-report's: one ledger per holder, over that holder's wallets
+  company/                                # a holder
+    treasury/                             # a wallet of the holder
+      snapshots/
+        2026-03-02-880412/                # a prove during the year
+        2026-09-14-912345/                # a full snapshot
+          snapshot.json  message.txt  to_sign/  signed/
+          treasury-2026-09-14-912345-proofs.json
+      statements/                         # bip322-report's: the wallet's statements
+    statements/                           # bip322-report's: the holder's ledgers over its wallets
 ```
 
-`-w NAME` names the wallet: its directory, and the node wallet of the same
+`-w NAME` names the wallet: its directory, under whichever holder it is
+(a wallet's name is unique in the tree), and the node wallet of the same
 name (or the one `node` names in its `[wallets.NAME]` table of
 `bip322.toml`, for a node wallet whose name is long or no directory name).
-Without `-w`, the wallet directory the command runs in names it, else
-`wallet` in `bip322.toml`, else the node's one loaded wallet does; inside a
-snapshot's directory, `finalize` and `verify` mean that snapshot. A second
-wallet is a second directory, created when first written to. The snapshots
-hold the PSBTs, which carry the wallet's xpubs: they stay with the holder.
+A wallet not in the tree yet is made under the holder `-w KEY/NAME` names,
+else the holder whose directory the command runs in, else `holder` in
+`bip322.toml`, else the tree's one holder. Without `-w`, the wallet directory
+the command runs in names the wallet, else `wallet` in `bip322.toml`, else
+the node's one loaded wallet does; inside a snapshot's directory, `finalize`
+and `verify` mean that snapshot. The snapshots hold the PSBTs, which carry
+the wallet's xpubs: they stay with the holder.
 
 In `bip322.toml`, top-level keys are defaults for every wallet, a
 `[wallets.NAME]` table is for one, and the command line beats both:
 
 ```toml
+holder = "company"
 wallet = "treasury"
 text = "Proof of control {date}"
 cli = "bitcoin-cli -rpcconnect=10.0.0.5"
+
+[holders.company]
+name = "Company AB"
 
 [wallets.treasury]
 node = "treasury-2of3-main"
 ```
 
 `init` writes the file with every key the tools read as a comment to switch
-on, and `-w NAME` switches `wallet = NAME` and its table on. An existing file
-is left alone.
+on, and `-w KEY/NAME` switches `holder = KEY`, `wallet = NAME` and their
+tables on. An existing file is left alone.
 
-Keys this package reads: `wallet`, `cli`, `timeout`, `text`, and `node` per
-wallet; bip322-report reads more.
+Keys this package reads: `holder`, `wallet`, `cli`, `timeout`, `text`, `node`
+per wallet, and `name` per holder; bip322-report reads more.
 
 Over the years the snapshots accumulate, and their proofs files are what
 `--skip-proven` reads:

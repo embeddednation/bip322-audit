@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.0 (2026-10-15)
+
+Holders above wallets: the tree is `<holder>/<wallet>/snapshots/…` and
+`<holder>/<wallet>/statements/…`, with the holder's own ledgers in
+`<holder>/statements/` (bip322-report). A wallet's name is unique in the
+tree, so `-w NAME` finds it under whichever holder it is; a wallet not there
+yet is made under `-w KEY/NAME`'s holder, else the holder whose directory the
+command runs in, else `holder` in `bip322.toml`, else the tree's one holder.
+`bip322 init -w KEY/NAME` (or `--holder KEY`) switches the holder on in the
+sample, whose `[holders.KEY]` table now carries only `name`; `holder = KEY`
+at the top is the default holder. `Config.default_holder`, `holder_name(key)`;
+`holders()`, `wallet_dirs()`, `holder_of_wallet`, `holder_of_cwd`,
+`current_holder`, `holder_statements_dir`, `name_wallet`, `use_holder`;
+`holders/` and `wallets = […]` are gone.
+
 ## 0.18.0 (2026-10-15)
 
 - `[holders.KEY]` in `bip322.toml` groups wallets explicitly: `name` (the

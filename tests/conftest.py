@@ -33,4 +33,7 @@ def data_directory(tmp_path, monkeypatch):
     """Every test gets its own ~/bip322, so nothing reads or writes the developer's."""
     monkeypatch.setenv("BIP322_DIR", str(tmp_path / "bip322"))
     monkeypatch.setattr(datadir, "_chosen", None)  # no --dir left over from a test before
+    monkeypatch.setattr(datadir, "_holder", None)  # nor a -w KEY/NAME
+    (tmp_path / "bip322").mkdir()
+    (tmp_path / "bip322" / "bip322.toml").write_text('holder = "h"\n')  # the holder a new wallet goes under
     return tmp_path / "bip322"

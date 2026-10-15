@@ -6,9 +6,10 @@ result is FAILED, and 3, the result is INCOMPLETE: nothing failed, but the node 
 not show every listed output held at the stamp block.
 
 ``init`` makes a directory the data directory, and a command run in it or below finds
-it (``--dir`` or ``BIP322_DIR`` name one from elsewhere).  ``-w`` names the wallet, else
-the wallet directory the command runs in does, else ``bip322.toml``, else the node's one
-loaded wallet is it.  ``-o`` writes elsewhere.
+it (``--dir`` or ``BIP322_DIR`` name one from elsewhere).  Inside, one directory per
+holder and one per wallet under it.  ``-w`` names the wallet (``KEY/NAME`` the holder a
+new one is made under), else the wallet directory the command runs in does, else
+``bip322.toml``, else the node's one loaded wallet is it.  ``-o`` writes elsewhere.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from .audit import EXIT_CODES, AuditError, finalize_snapshot, format_report, loa
 from .datadir import (
     Config,
     ConfigError,
+    name_wallet,
     only_wallet,
     proofs_file_in,
     proofs_file_name,
@@ -71,7 +73,7 @@ def _wallet_name(args, config: Config) -> str | None:
     """The wallet as named by the owner: ``-w``, else the wallet directory the command runs in, else ``wallet`` in bip322.toml; None when none says."""
     given = _opt(args, "wallet")
     if given is not None:
-        return str(given)
+        return name_wallet(str(given))
     here = wallet_of_cwd()
     if here is not None:
         return here
@@ -162,7 +164,12 @@ def _proven(wallet: str | None, skip_proven: bool) -> set[str] | None:
 
 def cmd_init(args) -> int:
     directory = Path(args.directory or _opt(args, "dir") or os.environ.get("BIP322_DIR") or os.curdir).expanduser()
-    print(write_config(directory, _opt(args, "wallet")))
+    holder, wallet = args.holder, _opt(args, "wallet")
+    if wallet is not None and "/" in wallet:
+        holder, _, wallet = wallet.rpartition("/")
+    if wallet is not None and holder is None:
+        raise CLIError(f"a wallet lives under a holder: -w KEY/{wallet} (or --holder KEY)")
+    print(write_config(directory, holder, wallet))
     return 0
 
 
@@ -406,15 +413,22 @@ def _add_init_parser(sub) -> None:
         "init",
         help="make a directory the data directory: bip322.toml, with every key shown, written into it",
         description="Make DIR (default: the current directory) the data directory by writing bip322.toml into it, with every key the "
-        "tools read as comments to switch on; -w NAME switches wallet = NAME and its [wallets.NAME] table on. The directory is "
-        "created if need be; an existing bip322.toml is left alone. From then on a command run in the directory or below finds "
-        "it, as git finds its repository. bip322 init runs this too.",
+        "tools read as comments to switch on; -w KEY/NAME switches holder = KEY, wallet = NAME and their tables on (the holder's "
+        "directory holds the wallet's). The directory is created if need be; an existing bip322.toml is left alone. From then on a "
+        "command run in the directory or below finds it, as git finds its repository. bip322 init runs this too.",
         epilog=EXIT_HELP,
     )
     p.add_argument("directory", metavar="DIR", nargs="?", help="the directory (default: the current one, or --dir / BIP322_DIR when given)")
-    p.add_argument("--wallet", "-w", dest="wallet_sub", metavar="NAME", help="the default wallet: wallet = NAME and its table switched on")
+    p.add_argument(
+        "--wallet",
+        "-w",
+        dest="wallet_sub",
+        metavar="KEY/NAME",
+        help="the default holder and wallet: holder, wallet and their tables switched on",
+    )
+    p.add_argument("--holder", metavar="KEY", help="the default holder alone: holder = KEY and its table switched on")
     p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the directory, as before the command")
-    p.set_defaults(func=cmd_init, examples=["init", "init ~/bip322 -w treasury"])
+    p.set_defaults(func=cmd_init, examples=["init", "init -w company/treasury", "init ~/bip322 --holder company"])
 
 
 def _add_stamp_parser(sub) -> None:

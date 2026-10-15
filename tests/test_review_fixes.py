@@ -12,7 +12,21 @@ from test_audit import T0, FakeCli, _signed_snapshot, fake_hash
 
 import bip322audit.cli as audit_cli
 from bip322audit.audit import AuditError, finalize_snapshot, format_report, verify_proofs
-from bip322audit.datadir import Config, ConfigError, data_dir, proofs_file_in, snapshots_dir, wallet_of_cwd
+from bip322audit.datadir import (
+    Config,
+    ConfigError,
+    data_dir,
+    holder_dir,
+    holder_of_cwd,
+    holder_of_wallet,
+    holders,
+    name_wallet,
+    proofs_file_in,
+    snapshots_dir,
+    use_holder,
+    wallet_of_cwd,
+    wallets,
+)
 from bip322audit.holdings import holdings
 from bip322audit.proofs import find_proofs, proven_addresses
 from bip322audit.rpc import BitcoinCli, RpcError
@@ -458,10 +472,12 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     monkeypatch.chdir(tmp_path)
     assert audit_cli.main(["finalize"]) == 2 and "not in a bip322 directory" in capsys.readouterr().err
     other = tmp_path / "other"  # a directory given, made for it, with the wallet switched on
-    assert audit_cli.main(["init", "other", "-w", "my wallet"]) == 0 and capsys.readouterr().out.strip() == str(other / "bip322.toml")
+    assert audit_cli.main(["init", "other", "-w", "co/my wallet"]) == 0 and capsys.readouterr().out.strip() == str(other / "bip322.toml")
     config = Config.load(other)
     assert config.get("wallet") == "my wallet" and set(config.wallets) == {"my wallet"} and config.node_wallet("my wallet") == "my wallet"
+    assert config.default_holder == "co" and config.holders == {"co": {}} and config.holder_name("co") == "co"
     assert audit_cli.main(["init", "x", "-w", "../x"]) == 2 and "not usable as a directory name" in capsys.readouterr().err
+    assert audit_cli.main(["init", "x", "-w", "x"]) == 2 and "a wallet lives under a holder: -w KEY/x" in capsys.readouterr().err
     assert not (tmp_path / "x").exists()
     # the current directory, with every line a comment
     assert audit_cli.main(["init"]) == 0 and capsys.readouterr().out.strip() == str(tmp_path / "bip322.toml")
@@ -469,6 +485,7 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     assert tomllib.loads(written) == {}
     switched_on = re.sub(r"^# (?=[a-z]+ = |\[)", "", written, flags=re.M)
     assert set(tomllib.loads(switched_on)) == {
+        "holder",
         "wallet",
         "cli",
         "timeout",
@@ -483,10 +500,11 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     }
     assert audit_cli.main(["init"]) == 2 and "exists already" in capsys.readouterr().err
     # from below: the directory is found, the wallet is the one the command runs in, and so is the snapshot
-    below = tmp_path / "treasury" / "snapshots" / "2026-01-01-1"
+    below = tmp_path / "company" / "treasury" / "snapshots" / "2026-01-01-1"
     below.mkdir(parents=True)
     monkeypatch.chdir(below)
     assert data_dir() == tmp_path and wallet_of_cwd() == "treasury" and Config.load().path == tmp_path / "bip322.toml"
+    assert holder_of_cwd() == "company" and holder_of_wallet("treasury") == "company" and wallets() == ["treasury"]
     assert audit_cli.main(["init"]) == 2 and "inside the bip322 directory" in capsys.readouterr().err
     assert audit_cli.main(["verify"]) == 2 and f"no finalized snapshot under {below.parent}" in capsys.readouterr().err
     (below / "snapshot.json").write_text("{}")
@@ -499,10 +517,12 @@ def test_wallet_and_dir_go_before_or_after_any_command(tmp_path, wallet, funded,
     fake = FakeCli(wallet, funded, tip=1000)
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
     elsewhere = tmp_path / "elsewhere"
-    assert audit_cli.main(["snapshot", "--max-index", "20", "-w", "watch", "--dir", str(elsewhere)]) == 0
-    assert Path(capsys.readouterr().out.strip()).parent == elsewhere / "watch" / "snapshots"
-    assert audit_cli.main(["--dir", str(elsewhere), "verify", "-w", "watch"]) == 2
-    assert f"no finalized snapshot under {elsewhere / 'watch' / 'snapshots'}" in capsys.readouterr().err
+    assert audit_cli.main(["snapshot", "--max-index", "20", "-w", "watch", "--dir", str(elsewhere)]) == 2  # no holder there yet
+    assert "which holder? a wallet lives under one: -w KEY/NAME" in capsys.readouterr().err
+    assert audit_cli.main(["snapshot", "--max-index", "20", "-w", "co/watch", "--dir", str(elsewhere)]) == 0
+    assert Path(capsys.readouterr().out.strip()).parent == elsewhere / "co" / "watch" / "snapshots"
+    assert audit_cli.main(["--dir", str(elsewhere), "verify", "-w", "watch"]) == 2  # found under its holder
+    assert f"no finalized snapshot under {elsewhere / 'co' / 'watch' / 'snapshots'}" in capsys.readouterr().err
     assert audit_cli.main(["verify", "-w", "watch"]) == 2 and not snapshots_dir("watch").exists()  # BIP322_DIR: nothing there
     assert f"no finalized snapshot under {snapshots_dir('watch')}" in capsys.readouterr().err
     assert audit_cli.main(["stamp", "-w", "watch"]) == 0
@@ -630,43 +650,58 @@ def test_docs_name_every_command_module_and_exit_code():
     assert "prove" in audit_cli.__doc__ and "holdings" in audit_cli.__doc__
 
 
-def test_the_holders_directory_is_not_a_wallet(tmp_path, monkeypatch):
-    from bip322audit.datadir import ConfigError, holder_dir, wallets
+def test_holders_above_wallets(tmp_path, monkeypatch):
+    """The tree: <holder>/<wallet>/; a wallet is found under whichever holder it is, a new one is made under the holder meant."""
+    from bip322audit.datadir import current_holder, holder_statements_dir, wallet_dir, wallet_dirs
 
     monkeypatch.setenv("BIP322_DIR", str(tmp_path))
-    (tmp_path / "treasury" / "snapshots").mkdir(parents=True)
-    (tmp_path / "cold" / "statements").mkdir(parents=True)
-    for name in ("holders", "notes", ".git"):  # written there for something else: not wallets
-        (tmp_path / name).mkdir()
-    assert wallets() == ["cold", "treasury"] and holder_dir("company-ab") == tmp_path / "holders" / "company-ab"
-    with pytest.raises(ConfigError, match="not usable as a directory name"):
-        holder_dir("../x")
+    (tmp_path / "company" / "treasury" / "snapshots").mkdir(parents=True)
+    (tmp_path / "company" / "statements").mkdir()
+    (tmp_path / "jonas" / "personal" / "statements").mkdir(parents=True)
+    (tmp_path / "notes").mkdir()  # a directory written there for something else: neither holder nor wallet
+    (tmp_path / "company" / "out").mkdir()
+    assert holders() == ["company", "jonas"] and wallets() == ["personal", "treasury"]
+    assert wallet_dirs() == {"personal": tmp_path / "jonas" / "personal", "treasury": tmp_path / "company" / "treasury"}
+    assert holder_of_wallet("treasury") == "company" and holder_of_wallet("new") is None
+    assert wallet_dir("personal") == tmp_path / "jonas" / "personal"  # wherever it is
+    assert holder_statements_dir("company") == tmp_path / "company" / "statements"
+    # a new wallet: the holder named, else the current directory's, else bip322.toml's, else the one holder
+    with pytest.raises(ConfigError, match="which holder.*holders here: company, jonas"):
+        wallet_dir("new")
+    assert name_wallet("jonas/new") == "new" and wallet_dir("new") == tmp_path / "jonas" / "new"
+    use_holder(None)
+    monkeypatch.chdir(tmp_path / "company" / "treasury")
+    assert current_holder() == "company" and holder_of_cwd() == "company" and wallet_of_cwd() == "treasury"
+    monkeypatch.chdir(tmp_path / "company" / "statements")
+    assert wallet_of_cwd() is None and holder_of_cwd() == "company"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bip322.toml").write_text('holder = "jonas"\n')
+    assert current_holder() == "jonas"
+    (tmp_path / "bip322.toml").write_text("")
+    import shutil
+
+    shutil.rmtree(tmp_path / "jonas")
+    assert current_holder() == "company"
+    (tmp_path / "jonas" / "treasury" / "snapshots").mkdir(parents=True)
+    with pytest.raises(ConfigError, match="wallet treasury is under two holders, company and jonas"):
+        wallets()
+    for bad in ("snapshots", "statements", "../x"):
+        with pytest.raises(ConfigError, match="not usable as a directory name"):
+            holder_dir(bad)
 
 
-def test_holders_group_wallets_explicitly():
-    """[holders.KEY]: name and wallets; a wallet under one holder only; the key is a directory name; holder_name for a statement."""
-    good = Config(
-        {
-            "holders": {"company": {"name": "Company AB", "wallets": ["treasury", "cold"]}, "jonas": {"wallets": ["personal"]}},
-            "wallets": {"cold": {"holder": "Ignored"}},
-        }
-    )
-    assert good.holders == {
-        "company": {"name": "Company AB", "wallets": ["treasury", "cold"]},
-        "jonas": {"name": "jonas", "wallets": ["personal"]},
-    }
-    assert good.holder_of("cold") == "company" and good.holder_of("other") is None
-    assert good.holder_name("cold") == "Company AB" and good.holder_name("personal") == "jonas" and good.holder_name("other") is None
-    assert Config({"holder": "Top", "wallets": {"w": {"holder": "Own"}}}).holder_name("w") == "Own"
-    assert Config({"holder": "Top"}).holder_name("w") == "Top" and Config({}).holder_name(None) is None and Config({}).holders == {}
+def test_holders_in_the_config():
+    """holder = KEY is the default holder, a directory name; [holders.KEY] carries the name the statements put."""
+    good = Config({"holder": "company", "holders": {"company": {"name": "Company AB"}, "jonas": {}}})
+    assert good.default_holder == "company" and good.holder_name("company") == "Company AB" and good.holder_name("jonas") == "jonas"
+    assert good.holder_name("other") == "other" and good.holder_name(None) is None and Config({}).default_holder is None
     for bad, text in (
+        ({"holder": "Company AB"}, "default holder is its directory's name"),
+        ({"holder": 3}, "default holder is its directory's name"),
         ({"holders": {"a": 1}}, r"one \[holders.KEY\] table"),
-        ({"holders": {"a b": {"wallets": ["x"]}}}, "directory name"),
-        ({"holders": {"a": {}}}, "needs wallets"),
-        ({"holders": {"a": {"wallets": []}}}, "needs wallets"),
-        ({"holders": {"a": {"wallets": ["x", 2]}}}, "needs wallets"),
-        ({"holders": {"a": {"wallets": ["x"], "name": 3}}}, "name must be a string"),
-        ({"holders": {"a": {"wallets": ["x"]}, "b": {"wallets": ["x"]}}}, "listed under two holders, a and b"),
+        ({"holders": {"a b": {}}}, "directory name"),
+        ({"holders": {"statements": {}}}, "directory name"),
+        ({"holders": {"a": {"name": 3}}}, "name must be a string"),
     ):
         with pytest.raises(ConfigError, match=text):
             Config(bad)

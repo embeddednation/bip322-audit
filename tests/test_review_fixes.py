@@ -12,7 +12,7 @@ from test_audit import T0, FakeCli, _signed_snapshot, fake_hash
 
 import bip322audit.cli as audit_cli
 from bip322audit.audit import AuditError, finalize_snapshot, format_report, verify_proofs
-from bip322audit.datadir import Config, data_dir, proofs_file_in, snapshots_dir, wallet_of_cwd
+from bip322audit.datadir import Config, ConfigError, data_dir, proofs_file_in, snapshots_dir, wallet_of_cwd
 from bip322audit.holdings import holdings
 from bip322audit.proofs import find_proofs, proven_addresses
 from bip322audit.rpc import BitcoinCli, RpcError
@@ -473,12 +473,12 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
         "cli",
         "timeout",
         "text",
-        "holder",
         "dust",
         "theme",
         "heading",
         "explorer",
         "wallets",
+        "holders",
         "addresses",
     }
     assert audit_cli.main(["init"]) == 2 and "exists already" in capsys.readouterr().err
@@ -641,3 +641,32 @@ def test_the_holders_directory_is_not_a_wallet(tmp_path, monkeypatch):
     assert wallets() == ["cold", "treasury"] and holder_dir("company-ab") == tmp_path / "holders" / "company-ab"
     with pytest.raises(ConfigError, match="not usable as a directory name"):
         holder_dir("../x")
+
+
+def test_holders_group_wallets_explicitly():
+    """[holders.KEY]: name and wallets; a wallet under one holder only; the key is a directory name; holder_name for a statement."""
+    good = Config(
+        {
+            "holders": {"company": {"name": "Company AB", "wallets": ["treasury", "cold"]}, "jonas": {"wallets": ["personal"]}},
+            "wallets": {"cold": {"holder": "Ignored"}},
+        }
+    )
+    assert good.holders == {
+        "company": {"name": "Company AB", "wallets": ["treasury", "cold"]},
+        "jonas": {"name": "jonas", "wallets": ["personal"]},
+    }
+    assert good.holder_of("cold") == "company" and good.holder_of("other") is None
+    assert good.holder_name("cold") == "Company AB" and good.holder_name("personal") == "jonas" and good.holder_name("other") is None
+    assert Config({"holder": "Top", "wallets": {"w": {"holder": "Own"}}}).holder_name("w") == "Own"
+    assert Config({"holder": "Top"}).holder_name("w") == "Top" and Config({}).holder_name(None) is None and Config({}).holders == {}
+    for bad, text in (
+        ({"holders": {"a": 1}}, r"one \[holders.KEY\] table"),
+        ({"holders": {"a b": {"wallets": ["x"]}}}, "directory name"),
+        ({"holders": {"a": {}}}, "needs wallets"),
+        ({"holders": {"a": {"wallets": []}}}, "needs wallets"),
+        ({"holders": {"a": {"wallets": ["x", 2]}}}, "needs wallets"),
+        ({"holders": {"a": {"wallets": ["x"], "name": 3}}}, "name must be a string"),
+        ({"holders": {"a": {"wallets": ["x"]}, "b": {"wallets": ["x"]}}}, "listed under two holders, a and b"),
+    ):
+        with pytest.raises(ConfigError, match=text):
+            Config(bad)

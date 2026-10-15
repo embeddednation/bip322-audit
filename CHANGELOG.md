@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.0 (2026-10-15)
+
+- `[holders.KEY]` in `bip322.toml` groups wallets explicitly: `name` (the
+  statements' header; default KEY) and `wallets`, the wallet directories that
+  are the holder's; a wallet is listed under one holder only, and the key is
+  the holder's directory name under `holders/`. `Config.holders`,
+  `holder_of`, `holder_name` (the latter falls back to the `holder` key).
+  The sample from `init` shows the table and no longer the `holder` key.
+
 ## 0.17.0 (2026-10-15)
 
 - `holders/` in the data directory, beside the wallets, for bip322-report's

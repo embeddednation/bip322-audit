@@ -28,8 +28,11 @@ writes it with every key shown (:func:`write_config`)::
     dust = 1000
 
     [wallets.treasury]
-    holder = "Company AB"
     node = "treasury-2of3-main"   # the node wallet, when its name is not the directory's
+
+    [holders.company]             # bip322 report holder company: one ledger over its wallets
+    name = "Company AB"
+    wallets = ["treasury", "cold"]
 """
 
 from __future__ import annotations
@@ -111,6 +114,27 @@ class Config:
         addresses = self.data.get("addresses", {})
         if not isinstance(addresses, dict) or not all(isinstance(v, str) for v in addresses.values()):
             raise ConfigError(f"{path or CONFIG_FILE}: [addresses] must map each address to the name of the wallet it belongs to")
+        self._check_holders(path)
+
+    def _check_holders(self, path: Path | None) -> None:
+        """``[holders.KEY]``: a directory-safe key, ``wallets`` listing at least one, an optional ``name``; a wallet under one holder only."""
+        where = path or CONFIG_FILE
+        holders = self.data.get("holders", {})
+        if not isinstance(holders, dict) or not all(isinstance(v, dict) for v in holders.values()):
+            raise ConfigError(f"{where}: [holders] must hold one [holders.KEY] table per holder")
+        listed: dict[str, str] = {}
+        for key, table in holders.items():
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+                raise ConfigError(f"{where}: [holders.{key}]: the key is the holder's directory name: letters, digits, - and _ only")
+            names = table.get("wallets")
+            if not isinstance(names, list) or not names or not all(isinstance(w, str) and w for w in names):
+                raise ConfigError(f'{where}: [holders.{key}] needs wallets = ["NAME", ...], the wallet directories that are the holder\'s')
+            if not isinstance(table.get("name", key), str):
+                raise ConfigError(f"{where}: [holders.{key}]: name must be a string, the holder's name as the statements put it")
+            for w in names:
+                if w in listed:
+                    raise ConfigError(f"{where}: wallet {w} is listed under two holders, {listed[w]} and {key}")
+                listed[w] = key
 
     @classmethod
     def load(cls, directory: Path | None = None) -> Config:
@@ -127,6 +151,26 @@ class Config:
     @property
     def wallets(self) -> dict[str, dict]:
         return self.data.get("wallets", {})
+
+    @property
+    def holders(self) -> dict[str, dict]:
+        """``[holders.KEY]`` tables, each as ``{"name": ..., "wallets": [...]}``; ``name`` defaults to the key."""
+        return {
+            key: {"name": str(t.get("name", key)), "wallets": [str(w) for w in t["wallets"]]}
+            for key, t in self.data.get("holders", {}).items()
+        }
+
+    def holder_of(self, wallet: str) -> str | None:
+        """The key of the holder whose table lists the wallet, None when none does."""
+        return next((key for key, h in self.holders.items() if wallet in h["wallets"]), None)
+
+    def holder_name(self, wallet: str | None) -> str | None:
+        """The holder's name for a wallet's statement: from the holder table listing it, else ``holder`` in its table or at the top."""
+        key = self.holder_of(wallet) if wallet is not None else None
+        if key is not None:
+            return self.holders[key]["name"]
+        value = self.get("holder", wallet)
+        return str(value) if value is not None else None
 
     @property
     def addresses(self) -> dict[str, str]:
@@ -287,7 +331,6 @@ _SAMPLE_KEYS = (
     ("timeout = 600", "seconds to wait for a node call"),
     ('text = "Proof of control {date}"', "the message; {date} {time} {height} {hash} of the stamp block"),
     None,
-    ('holder = "Company AB"', "the statement's header; wallets with one holder make one holder ledger"),
     ("dust = 1000", "satoshi; received outputs at or below this are left out of the statement"),
     ('theme = "journal"', "journal, paper, light or dark"),
     ('heading = "underline"', "underline, tab, number or redrule; default per theme"),
@@ -305,7 +348,8 @@ def _key(name: str) -> str:
 
 
 def sample_config(wallet: str | None = None) -> str:
-    """``bip322.toml`` with every key the tools read, and ``[addresses]``: ``wallet`` and its table switched on when one is named, else every line a comment."""
+    """``bip322.toml`` with every key the tools read, ``[holders.KEY]`` and ``[addresses]``: ``wallet`` and its table switched on when one is
+    named, else every line a comment."""
     names, on = ([wallet], True) if wallet is not None else (["treasury", "personal"], False)
     lines = [_SAMPLE_HEAD, _row(f"wallet = {json.dumps(names[0])}", "the default -w: the directory, and the node wallet of that name", on)]
     lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
@@ -314,9 +358,13 @@ def sample_config(wallet: str | None = None) -> str:
             "",
             f"{'' if on else '# '}[wallets.{_key(name)}]",
             _row(f'node = "{name}-2of3-main"', "the node wallet, when its name is not the directory's"),
-            _row('holder = "Company AB"', "a key given here beats the one above, for this wallet"),
+            _row("dust = 500", "a key given here beats the one above, for this wallet"),
         ]
     lines += [
+        "",
+        _row("[holders.company]", "a holder: bip322 report holder company, one ledger over its wallets"),
+        _row('name = "Company AB"', "the statements' header"),
+        _row(f"wallets = {json.dumps(names)}", "the wallet directories that are the holder's"),
         "",
         _row("[addresses]", "the other side of a movement, named in the statement's CSV"),
         _row('"bc1q..." = "Exchange"', "an address of theirs = the wallet it belongs to"),

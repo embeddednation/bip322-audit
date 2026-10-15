@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.1 (2026-10-15)
+
+Needs bip322-core 0.12: `bip322 checksigners signed/*.psbt` checks every
+address of a snapshot at once, one block per address and one verdict.
+
 ## 0.15.0 (2026-10-13)
 
 Like git: `bip322 init [DIR]` makes a directory the data directory by writing

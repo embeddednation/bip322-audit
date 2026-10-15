@@ -105,6 +105,9 @@ class Config:
         wallets = self.data.get("wallets", {})
         if not isinstance(wallets, dict) or not all(isinstance(v, dict) for v in wallets.values()):
             raise ConfigError(f"{path or CONFIG_FILE}: [wallets] must hold one [wallets.NAME] table per wallet")
+        addresses = self.data.get("addresses", {})
+        if not isinstance(addresses, dict) or not all(isinstance(v, str) for v in addresses.values()):
+            raise ConfigError(f"{path or CONFIG_FILE}: [addresses] must map each address to the name of the wallet it belongs to")
 
     @classmethod
     def load(cls, directory: Path | None = None) -> Config:
@@ -121,6 +124,11 @@ class Config:
     @property
     def wallets(self) -> dict[str, dict]:
         return self.data.get("wallets", {})
+
+    @property
+    def addresses(self) -> dict[str, str]:
+        """``[addresses]``: the wallet each address of someone else belongs to, which names the other side of a movement."""
+        return self.data.get("addresses", {})
 
     def get(self, key: str, wallet: str | None = None, default=None):
         """A setting: the wallet's own table first, then the top level, then ``default``."""
@@ -286,7 +294,7 @@ def _key(name: str) -> str:
 
 
 def sample_config(wallet: str | None = None) -> str:
-    """``bip322.toml`` with every key the tools read: ``wallet`` and its table switched on when one is named, else every line a comment."""
+    """``bip322.toml`` with every key the tools read, and ``[addresses]``: ``wallet`` and its table switched on when one is named, else every line a comment."""
     names, on = ([wallet], True) if wallet is not None else (["treasury", "personal"], False)
     lines = [_SAMPLE_HEAD, _row(f"wallet = {json.dumps(names[0])}", "the default -w: the directory, and the node wallet of that name", on)]
     lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
@@ -297,6 +305,11 @@ def sample_config(wallet: str | None = None) -> str:
             _row(f'node = "{name}-2of3-main"', "the node wallet, when its name is not the directory's"),
             _row('holder = "Company AB"', "a key given here beats the one above, for this wallet"),
         ]
+    lines += [
+        "",
+        _row("[addresses]", "the other side of a movement, named in the statement's CSV"),
+        _row('"bc1q..." = "Exchange"', "an address of theirs = the wallet it belongs to"),
+    ]
     return "\n".join(lines) + "\n"
 
 

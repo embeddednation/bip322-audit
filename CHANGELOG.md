@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 (2026-10-15)
+
+- `[addresses]` in `bip322.toml`: the wallet each address of someone else
+  belongs to (`"bc1q..." = "Exchange"`), read by bip322-report to name the
+  other side of a movement. `bip322 init` shows it in the sample.
+
 ## 0.15.1 (2026-10-15)
 
 Needs bip322-core 0.12: `bip322 checksigners signed/*.psbt` checks every

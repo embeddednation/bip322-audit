@@ -479,6 +479,7 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
         "heading",
         "explorer",
         "wallets",
+        "addresses",
     }
     assert audit_cli.main(["init"]) == 2 and "exists already" in capsys.readouterr().err
     # from below: the directory is found, the wallet is the one the command runs in, and so is the snapshot

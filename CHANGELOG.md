@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0 (2026-10-16)
+
+Settings per holder: a key in a `[holders.KEY]` table (`text`, `cli`,
+`timeout`, and what bip322-report reads) applies to the holder's wallets,
+between the wallet's own `[wallets.NAME]` table and the top level. A wallet's
+holder is the directory it is under; a wallet not in the tree yet takes the
+holder it would be made under. `Config.get(..., holder=KEY)` names one
+outright; `holder_of(wallet)` is the resolution. The `init` sample shows a
+holder's `text`.
+
 ## 0.19.0 (2026-10-15)
 
 Holders above wallets: the tree is `<holder>/<wallet>/snapshots/…` and

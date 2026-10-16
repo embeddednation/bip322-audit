@@ -238,7 +238,8 @@ and `verify` mean that snapshot. The snapshots hold the PSBTs, which carry
 the wallet's xpubs: they stay with the holder.
 
 In `bip322.toml`, top-level keys are defaults for every wallet, a
-`[wallets.NAME]` table is for one, and the command line beats both:
+`[holders.KEY]` table overrides them for the holder's wallets, a
+`[wallets.NAME]` table for one, and the command line beats all:
 
 ```toml
 holder = "company"
@@ -248,10 +249,14 @@ cli = "bitcoin-cli -rpcconnect=10.0.0.5"
 
 [holders.company]
 name = "Company AB"
+text = "Proof of control, Company AB (556123-4567), {date}"
 
 [wallets.treasury]
 node = "treasury-2of3-main"
 ```
+
+A wallet's holder is the directory it is under; a wallet not in the tree yet
+takes the holder it would be made under.
 
 `init` writes the file with every key the tools read as a comment to switch
 on, and `-w KEY/NAME` switches `holder = KEY`, `wallet = NAME` and their
@@ -259,6 +264,7 @@ tables on. An existing file is left alone.
 
 Keys this package reads: `holder`, `wallet`, `cli`, `timeout`, `text`, `node`
 per wallet, and `name` per holder; bip322-report reads more.
+`bip322 audit snapshot --text` beats them all for one snapshot.
 
 Over the years the snapshots accumulate, and their proofs files are what
 `--skip-proven` reads:

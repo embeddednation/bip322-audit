@@ -21,9 +21,10 @@ a statement's file, is named for its life, ``<wallet>-<when>-<kind>``, and
 keeps that one name at home, in a statement and at the auditor's.  Inside a
 wallet's directory that wallet is the one meant (:func:`wallet_of_cwd`).
 
-``bip322.toml`` holds defaults for every wallet at the top level and, in a
-``[wallets.NAME]`` table, for one; the command line beats both.  ``init``
-writes it with every key shown (:func:`write_config`)::
+``bip322.toml`` holds defaults for every wallet at the top level, for a
+holder's wallets in its ``[holders.KEY]`` table and for one wallet in its
+``[wallets.NAME]`` table; the nearer wins, and the command line beats all
+(:meth:`Config.get`).  ``init`` writes it with every key shown (:func:`write_config`)::
 
     holder = "company"            # the default holder: a new -w NAME is made in its directory
     wallet = "treasury"           # the default -w
@@ -33,6 +34,7 @@ writes it with every key shown (:func:`write_config`)::
 
     [holders.company]
     name = "Company AB"           # the statements' header (default: the key)
+    text = "Proof of control, Company AB, {date}"   # for the holder's wallets
 
     [wallets.treasury]
     node = "treasury-2of3-main"   # the node wallet, when its name is not the directory's
@@ -52,6 +54,7 @@ __all__ = [
     "data_dir",
     "find_data_dir",
     "holder_dir",
+    "holder_of",
     "holder_of_cwd",
     "holder_of_wallet",
     "holder_statements_dir",
@@ -75,6 +78,7 @@ __all__ = [
 ]
 
 CONFIG_FILE = "bip322.toml"
+_TABLES = ("holders", "wallets", "addresses")  # the tables of bip322.toml: not settings
 RESERVED = ("snapshots", "statements")  # directory names the tree uses for its own: no wallet or holder may take them
 _NAME = re.compile(r"[A-Za-z0-9_.-]+")
 
@@ -128,7 +132,7 @@ class Config:
         self._check_holders(path)
 
     def _check_holders(self, path: Path | None) -> None:
-        """``holder`` (the default holder) is a directory name; ``[holders.KEY]`` tables carry a string ``name`` at most."""
+        """``holder`` (the default holder) is a directory name; a ``[holders.KEY]`` table's ``name`` is a string."""
         where = path or CONFIG_FILE
         default = self.data.get("holder")
         if default is not None and (not isinstance(default, str) or not _NAME.fullmatch(default) or default in RESERVED):
@@ -160,7 +164,7 @@ class Config:
 
     @property
     def holders(self) -> dict[str, dict]:
-        """``[holders.KEY]`` tables as they are (``name`` at most)."""
+        """``[holders.KEY]`` tables as they are: ``name``, and defaults for the holder's wallets."""
         return self.data.get("holders", {})
 
     @property
@@ -180,11 +184,19 @@ class Config:
         """``[addresses]``: the wallet each address of someone else belongs to, which names the other side of a movement."""
         return self.data.get("addresses", {})
 
-    def get(self, key: str, wallet: str | None = None, default=None):
-        """A setting: the wallet's own table first, then the top level, then ``default``."""
+    def get(self, key: str, wallet: str | None = None, default=None, *, holder: str | None = None):
+        """A setting: the wallet's own table, then its holder's, then the top level, then ``default``.
+
+        The holder is ``holder`` when given, else the wallet's (:func:`holder_of`): the directory it is under, or
+        the one a new wallet would be made under.
+        """
         if wallet is not None and key in self.wallets.get(wallet, {}):
             return self.wallets[wallet][key]
-        if key != "wallets" and key in self.data:
+        if holder is None:
+            holder = holder_of(wallet)
+        if holder is not None and key in self.holders.get(holder, {}):
+            return self.holders[holder][key]
+        if key not in _TABLES and key in self.data:
             return self.data[key]
         return default
 
@@ -277,6 +289,18 @@ def holder_of_wallet(wallet: str) -> str | None:
     """The holder whose directory holds the wallet; None for a wallet not in the tree yet."""
     path = wallet_dirs().get(wallet)
     return path.parent.name if path is not None else None
+
+
+def holder_of(wallet: str | None) -> str | None:
+    """The holder a wallet's settings come from: the directory it is under, else the one a new wallet is made under
+    (:func:`current_holder`); None when nothing says, or outside a tree."""
+    found = holder_of_wallet(wallet) if wallet is not None else None
+    if found is not None:
+        return found
+    try:
+        return current_holder()
+    except ConfigError:
+        return None
 
 
 def holder_of_cwd() -> str | None:
@@ -413,8 +437,8 @@ def snapshot_directory(given: str | None, wallet: str | None, *, finalized: bool
 _SAMPLE_HEAD = """\
 # bip322.toml: this is the bip322 directory: one directory per holder, one per
 # wallet inside it; a command run here or below finds it. Top-level keys are
-# defaults for every wallet; a [wallets.NAME] table overrides them for one; the
-# command line beats both.
+# defaults for every wallet; a [holders.KEY] table overrides them for the
+# holder's wallets, a [wallets.NAME] table for one; the command line beats all.
 """
 _SAMPLE_KEYS = (
     ('cli = "bitcoin-cli"', 'e.g. "bitcoin-cli -rpcconnect=10.0.0.5" or "bitcoin-cli -signet"'),
@@ -429,7 +453,7 @@ _SAMPLE_KEYS = (
 
 
 def _row(setting: str, note: str, on: bool = False) -> str:
-    return f"{'' if on else '# '}{setting}".ljust(38) + f"# {note}"
+    return f"{'' if on else '# '}{setting}".ljust(37) + f" # {note}"
 
 
 def _key(name: str) -> str:
@@ -452,6 +476,7 @@ def sample_config(holder: str | None = None, wallet: str | None = None) -> str:
         "",
         f"{'' if holder_on else '# '}[holders.{_key(key)}]".ljust(38) + "# the holder: bip322 report holder, one ledger over its wallets",
         _row('name = "Company AB"', "the statements' header (default: the key)"),
+        _row('text = "Proof of control, Company AB, {date}"', "a key given here beats the one above, for the holder's wallets"),
     ]
     for name in names:
         lines += [

@@ -705,3 +705,49 @@ def test_holders_in_the_config():
     ):
         with pytest.raises(ConfigError, match=text):
             Config(bad)
+
+
+def test_settings_per_holder(tmp_path, monkeypatch):
+    """A key in [holders.KEY] applies to the holder's wallets: after the wallet's own table, before the top level."""
+    from bip322audit.datadir import holder_of, use_holder
+
+    monkeypatch.setenv("BIP322_DIR", str(tmp_path))
+    (tmp_path / "company" / "treasury" / "snapshots").mkdir(parents=True)
+    (tmp_path / "company" / "cold" / "snapshots").mkdir(parents=True)
+    (tmp_path / "jonas" / "personal" / "snapshots").mkdir(parents=True)
+    config = Config(
+        {
+            "text": "Proof {date}",
+            "cli": "bitcoin-cli",
+            "holders": {"company": {"name": "Company AB", "text": "Company AB {date}", "cli": "bitcoin-cli -rpcconnect=10.0.0.5"}},
+            "wallets": {"cold": {"text": "Cold {date}"}},
+        }
+    )
+    assert holder_of("treasury") == "company" and holder_of("personal") == "jonas" and holder_of("new") is None
+    assert config.get("text", "treasury") == "Company AB {date}" and config.get("cli", "treasury") == "bitcoin-cli -rpcconnect=10.0.0.5"
+    assert config.get("text", "cold") == "Cold {date}" and config.get("cli", "cold") == "bitcoin-cli -rpcconnect=10.0.0.5"
+    assert config.get("text", "personal") == "Proof {date}" and config.get("cli", "personal") == "bitcoin-cli"
+    assert config.get("text", "new") == "Proof {date}"  # no holder for it yet
+    assert config.get("text", "personal", holder="company") == "Company AB {date}"  # a holder named outright
+    assert config.get("timeout", "treasury", 7) == 7 and config.get("holders") is None and config.get("wallets") is None
+    use_holder("company")  # -w company/new: the new wallet takes its holder's settings
+    assert holder_of("new") == "company" and config.get("text", "new") == "Company AB {date}"
+    use_holder(None)
+    (tmp_path / "bip322.toml").write_text('holder = "company"\n')
+    assert holder_of(None) == "company" and config.get("text", "new") == "Company AB {date}"
+    monkeypatch.chdir(tmp_path / "jonas")
+    assert holder_of(None) == "jonas" and config.get("text", "new") == "Proof {date}"
+
+
+def test_a_holders_text_signs_its_wallets_snapshots(tmp_path, wallet, funded, monkeypatch, capsys):
+    """bip322.toml: text under [holders.h] is the message of a snapshot of a wallet under h/, unless --text says otherwise."""
+    fake = FakeCli(wallet, funded, tip=1000)
+    monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
+    root = tmp_path / "bip322"
+    (root / "bip322.toml").write_text('holder = "h"\ntext = "Proof {date}"\n[holders.h]\ntext = "Company AB (556123-4567) {date}"\n')
+    assert audit_cli.main(["snapshot", "-w", "watch"]) == 0
+    directory = Path(capsys.readouterr().out.strip())
+    assert directory.parent == root / "h" / "watch" / "snapshots"
+    assert (directory / "message.txt").read_text().startswith("Company AB (556123-4567) 20")
+    assert audit_cli.main(["snapshot", "-w", "watch", "--text", "Audit {date}", "--force"]) == 0
+    assert (Path(capsys.readouterr().out.strip()) / "message.txt").read_text().startswith("Audit 20")

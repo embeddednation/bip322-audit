@@ -10,8 +10,8 @@ Everything that talks to a node lives here (through ``bitcoin-cli``); the
 * ``verify``    BIP-322 verdicts, stamp check, UTXO checks, totals, report
 * ``holdings``  what outputs or addresses hold now, and at a block
 
-Everything is kept in one tree, ``<holder>/<wallet>/snapshots/<date>-<height>/`` under the directory ``init`` made
-(``datadir``), and the proofs files under it are what ``--skip-proven`` reads (``proofs``).
+Everything is kept in one tree, ``<holder>/<wallet>/<date>-<height>/`` under the directory ``init`` made
+(``datadir``), and the proofs files in the wallet's directory are what ``--skip-proven`` reads (``proofs``).
 """
 
 from ._version import __version__

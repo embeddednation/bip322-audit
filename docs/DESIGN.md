@@ -44,7 +44,7 @@ credentials are what is trusted and the tool holds none. The commands are
 * **`holdings`.** A reader's lookup, by output (`gettxout`) or by address
   (`scantxoutset`): unspent now, and with `--at` whether confirmed at or
   before that block. It needs no snapshot.
-* **One tree, named by the tools.** `<wallet>/snapshots/<date>-<height>/` under the
+* **One tree, named by the tools.** `<holder>/<wallet>/<date>-<height>/` under the
   directory `init` made holds each snapshot, and its `bip322.toml` marks the directory
   and holds the defaults; a command run below finds it, as git does; `-w` names the
   wallet and the wallet names the rest, so the yearly commands take no paths.

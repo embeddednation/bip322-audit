@@ -6,20 +6,25 @@ it, and a command run in it or anywhere below finds it, as git finds its reposit
 
     <dir>/
       bip322.toml                           the mark of the directory, and the one configuration file
-      <holder>/<wallet>/snapshots/<date>-<height>/   one round of proofs: snapshot.json, message.txt, to_sign/,
-                                                     signed/, and once finalized <wallet>-<date>-<height>-proofs.json
-      <holder>/<wallet>/statements/<label>/          a statement: <wallet>-<label>.pdf (or .html), .json, .csv,
-                                                     and a copy of each proofs file it cites
-      <holder>/statements/<label>/                   the holder's ledger over its wallets (bip322-report), named the same way
+      <holder>/statements/<label>/          a statement of the holder over its wallets (bip322-report): <holder>-<label>.pdf
+                                            (or .html), .json, .csv, -history.pdf, and a copy of each proofs file it cites
+      <holder>/<wallet>/<date>-<height>/    one round of proofs: snapshot.json, message.txt, to_sign/, signed/,
+                                            and once finalized <wallet>-<date>-<height>-proofs.json
+      <holder>/<wallet>/history.json        the wallet's history as bip322-report last read it from the node
 
-A directory is named for its place: the tree supplies the holder, the wallet
-and the kind, so the names stay bare.  A wallet's name is unique in the tree,
-so ``-w NAME`` finds it under whichever holder it is; a new wallet is made
-under ``-w KEY/NAME``'s holder, else the holder of the current directory, else
-``holder`` in ``bip322.toml``, else the tree's one holder.  A file that leaves the tree, a proofs file or
-a statement's file, is named for its life, ``<wallet>-<when>-<kind>``, and
-keeps that one name at home, in a statement and at the auditor's.  Inside a
-wallet's directory that wallet is the one meant (:func:`wallet_of_cwd`).
+A wallet's directory holds its snapshots and its history, nothing else; a
+holder's holds its wallets and its ``statements/``.  A directory is named for
+its place: the tree supplies the holder, the wallet and the kind, so the names
+stay bare.  A wallet's name is unique in the tree, so ``-w NAME`` finds it
+under whichever holder it is; a new wallet is made under ``-w KEY/NAME``'s
+holder, else the holder of the current directory, else ``holder`` in
+``bip322.toml``, else the tree's one holder.  A file that leaves the tree, a
+proofs file or a statement's file, is named for its life,
+``<wallet>-<when>-<kind>``, and keeps that one name at home, in a statement
+and at the auditor's.  Inside a wallet's directory that wallet is the one
+meant (:func:`wallet_of_cwd`).  Earlier versions kept a wallet's snapshots
+under ``<wallet>/snapshots/``: such a directory is refused with the command
+that moves them up.
 
 ``bip322.toml`` holds defaults for every wallet at the top level, for a
 holder's wallets in its ``[holders.KEY]`` table and for one wallet in its
@@ -49,6 +54,7 @@ import tomllib
 from pathlib import Path
 
 __all__ = [
+    "HISTORY_FILE",
     "Config",
     "ConfigError",
     "data_dir",
@@ -66,8 +72,6 @@ __all__ = [
     "proofs_file_name",
     "sample_config",
     "snapshot_directory",
-    "snapshots_dir",
-    "statements_dir",
     "use_data_dir",
     "use_holder",
     "wallet_dir",
@@ -79,7 +83,9 @@ __all__ = [
 
 CONFIG_FILE = "bip322.toml"
 _TABLES = ("holders", "wallets", "addresses")  # the tables of bip322.toml: not settings
-RESERVED = ("snapshots", "statements")  # directory names the tree uses for its own: no wallet or holder may take them
+RESERVED = ("snapshots", "statements")  # statements/ is the holder's, snapshots/ was the wallet's: no wallet or holder takes them
+HISTORY_FILE = "history.json"  # in a wallet's directory: its history as bip322-report last read it from the node
+SNAPSHOT_FILE = "snapshot.json"  # in a snapshot's directory: what marks one
 _NAME = re.compile(r"[A-Za-z0-9_.-]+")
 
 
@@ -250,8 +256,24 @@ def _tree_parts(directory: Path) -> tuple[str, ...] | None:
         return None
 
 
+def _is_snapshot_dir(path: Path) -> bool:
+    return path.is_dir() and (path / SNAPSHOT_FILE).is_file()
+
+
 def _is_wallet_dir(path: Path) -> bool:
-    return path.is_dir() and not path.name.startswith(".") and path.name not in RESERVED and any((path / r).is_dir() for r in RESERVED)
+    """A wallet's directory: one with a snapshot or a history in it (or a ``snapshots/``, as earlier versions laid it out)."""
+    if not path.is_dir() or path.name.startswith(".") or path.name in RESERVED:
+        return False
+    return (path / HISTORY_FILE).is_file() or (path / "snapshots").is_dir() or any(_is_snapshot_dir(p) for p in path.iterdir())
+
+
+def _check_layout(path: Path) -> None:
+    """A wallet directory laid out as earlier versions did, its snapshots under ``snapshots/``, is refused with the command that mends it."""
+    old = path / "snapshots"
+    if not old.is_dir():
+        return
+    mend = f"mv {old}/* {path}/ && rmdir {old}" if any(old.iterdir()) else f"rmdir {old}"
+    raise ConfigError(f"{old}: earlier versions kept the wallet's snapshots there; they now lie in {path} itself. Move them up: {mend}")
 
 
 def holders() -> list[str]:
@@ -272,6 +294,7 @@ def wallet_dirs() -> dict[str, Path]:
     for holder in holders():
         for path in sorted((data_dir() / holder).iterdir()):
             if _is_wallet_dir(path):
+                _check_layout(path)
                 if path.name in found:
                     raise ConfigError(
                         f"wallet {path.name} is under two holders, {found[path.name].parent.name} and {holder}: name them apart"
@@ -346,14 +369,6 @@ def wallet_dir(wallet: str) -> Path:
     return found if found is not None else data_dir() / current_holder() / wallet
 
 
-def snapshots_dir(wallet: str) -> Path:
-    return wallet_dir(wallet) / "snapshots"
-
-
-def statements_dir(wallet: str) -> Path:
-    return wallet_dir(wallet) / "statements"
-
-
 def only_wallet() -> str | None:
     """The one wallet in the data directory, when there is exactly one: what a command means when nothing names a wallet."""
     data_dir()  # a command that needs a wallet needs the tree: outside one, say so rather than "which wallet?"
@@ -383,14 +398,16 @@ def proofs_file_in(directory: Path) -> Path | None:
 
 
 def snapshot_name(stamp: dict) -> str:
-    """``<date>-<height>``: a snapshot directory's name under ``snapshots/``."""
+    """``<date>-<height>``: a snapshot directory's name in the wallet's directory."""
     return f"{str(stamp['time'])[:10]}-{stamp['height']}"
 
 
 def wallet_of_directory(directory: Path) -> str | None:
-    """The wallet a snapshot directory belongs to by its place in the tree (``<holder>/<wallet>/snapshots/<name>``); None elsewhere."""
+    """The wallet a snapshot directory belongs to by its place in the tree (``<holder>/<wallet>/<name>``); None elsewhere."""
     parts = _tree_parts(directory)
-    return parts[1] if parts and len(parts) == 4 and parts[2] == "snapshots" and parts[1] not in RESERVED else None
+    if not parts or len(parts) != 3 or parts[0].startswith(".") or parts[1].startswith(".") or parts[1] in RESERVED:
+        return None
+    return parts[1]
 
 
 def wallet_of_cwd() -> str | None:
@@ -409,9 +426,9 @@ def _stamp_height(directory: Path) -> tuple[int, str]:
 
 
 def newest_snapshot(wallet: str, *, finalized: bool | None = None) -> Path:
-    """The snapshot with the highest stamp under the wallet's ``snapshots/``; with ``finalized``, among those with (or without) a proofs file."""
-    root = snapshots_dir(wallet)
-    found = [p for p in root.iterdir() if (p / "snapshot.json").is_file()] if root.is_dir() else []
+    """The snapshot with the highest stamp in the wallet's directory; with ``finalized``, among those with (or without) a proofs file."""
+    root = wallet_dir(wallet)
+    found = [p for p in root.iterdir() if _is_snapshot_dir(p)] if root.is_dir() else []
     if finalized is not None:
         found = [p for p in found if (proofs_file_in(p) is not None) == finalized]
     if not found:
@@ -421,14 +438,14 @@ def newest_snapshot(wallet: str, *, finalized: bool | None = None) -> Path:
 
 
 def snapshot_directory(given: str | None, wallet: str | None, *, finalized: bool | None = None) -> Path:
-    """The snapshot a command means: a path, a name under the wallet's ``snapshots/``, or nothing for the newest one there."""
+    """The snapshot a command means: a path, a name in the wallet's directory, or nothing for the newest one there."""
     if given is not None:
         path = Path(given)
         if path.exists():
             return path
-        if wallet is not None and (snapshots_dir(wallet) / given).is_dir():
-            return snapshots_dir(wallet) / given
-        raise ConfigError(f"{given}: no such snapshot" + (f" (not a path, and not under {snapshots_dir(wallet)})" if wallet else ""))
+        if wallet is not None and (wallet_dir(wallet) / given).is_dir():
+            return wallet_dir(wallet) / given
+        raise ConfigError(f"{given}: no such snapshot" + (f" (not a path, and not under {wallet_dir(wallet)})" if wallet else ""))
     if wallet is None:
         raise ConfigError(f"which snapshot? name one, or the wallet with -w NAME (or wallet = NAME in {CONFIG_FILE}) for its newest")
     return newest_snapshot(wallet, finalized=finalized)
@@ -474,7 +491,7 @@ def sample_config(holder: str | None = None, wallet: str | None = None) -> str:
     lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
     lines += [
         "",
-        f"{'' if holder_on else '# '}[holders.{_key(key)}]".ljust(38) + "# the holder: bip322 report holder, one ledger over its wallets",
+        f"{'' if holder_on else '# '}[holders.{_key(key)}]".ljust(38) + "# the holder: bip322 report, one statement over its wallets",
         _row('name = "Company AB"', "the statements' header (default: the key)"),
         _row('text = "Proof of control, Company AB, {date}"', "a key given here beats the one above, for the holder's wallets"),
     ]

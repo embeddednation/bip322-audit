@@ -51,7 +51,7 @@ $CLI -rpcwallet=miner sendtoaddress "$A0" 0.5 >/dev/null; $CLI -rpcwallet=miner 
 $CLI -rpcwallet=miner generatetoaddress 7 "$MINE" >/dev/null
 $CLI -rpcwallet=watch listunspent 1 | .venv/bin/python -c "import json,sys;[print(u['address'], u['amount'], 'conf', u['confirmations']) for u in json.load(sys.stdin)]"
 
-step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address, into \$BIP322_DIR/demo/watch/snapshots/"
+step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address, into \$BIP322_DIR/demo/watch/"
 $AUDIT init -w demo/watch          # bip322.toml there: holder = "demo", wallet = "watch", every other key a comment to switch on
 SNAP=$(run $AUDIT --cli "$CLI" -w watch snapshot --text "Annual audit {date}")
 cat "$SNAP/message.txt"; echo; ls "$SNAP"

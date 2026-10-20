@@ -22,9 +22,10 @@ from bip322audit.datadir import (
     holders,
     name_wallet,
     proofs_file_in,
-    snapshots_dir,
     use_holder,
+    wallet_dir,
     wallet_of_cwd,
+    wallet_of_directory,
     wallets,
 )
 from bip322audit.holdings import holdings
@@ -500,14 +501,15 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     }
     assert audit_cli.main(["init"]) == 2 and "exists already" in capsys.readouterr().err
     # from below: the directory is found, the wallet is the one the command runs in, and so is the snapshot
-    below = tmp_path / "company" / "treasury" / "snapshots" / "2026-01-01-1"
+    below = tmp_path / "company" / "treasury" / "2026-01-01-1"
     below.mkdir(parents=True)
     monkeypatch.chdir(below)
     assert data_dir() == tmp_path and wallet_of_cwd() == "treasury" and Config.load().path == tmp_path / "bip322.toml"
-    assert holder_of_cwd() == "company" and holder_of_wallet("treasury") == "company" and wallets() == ["treasury"]
+    assert holder_of_cwd() == "company" and wallets() == []  # an empty directory is no wallet yet: its first snapshot makes it one
     assert audit_cli.main(["init"]) == 2 and "inside the bip322 directory" in capsys.readouterr().err
     assert audit_cli.main(["verify"]) == 2 and f"no finalized snapshot under {below.parent}" in capsys.readouterr().err
     (below / "snapshot.json").write_text("{}")
+    assert holder_of_wallet("treasury") == "company" and wallets() == ["treasury"] and wallet_of_directory(below) == "treasury"
     assert audit_cli.main(["verify"]) == 2 and "no proofs file" in capsys.readouterr().err
     assert audit_cli.main(["finalize"]) == 2 and "not a snapshot.json" in capsys.readouterr().err  # one line, not a KeyError
 
@@ -520,11 +522,11 @@ def test_wallet_and_dir_go_before_or_after_any_command(tmp_path, wallet, funded,
     assert audit_cli.main(["snapshot", "--max-index", "20", "-w", "watch", "--dir", str(elsewhere)]) == 2  # no holder there yet
     assert "which holder? a wallet lives under one: -w KEY/NAME" in capsys.readouterr().err
     assert audit_cli.main(["snapshot", "--max-index", "20", "-w", "co/watch", "--dir", str(elsewhere)]) == 0
-    assert Path(capsys.readouterr().out.strip()).parent == elsewhere / "co" / "watch" / "snapshots"
+    assert Path(capsys.readouterr().out.strip()).parent == elsewhere / "co" / "watch"
     assert audit_cli.main(["--dir", str(elsewhere), "verify", "-w", "watch"]) == 2  # found under its holder
-    assert f"no finalized snapshot under {elsewhere / 'co' / 'watch' / 'snapshots'}" in capsys.readouterr().err
-    assert audit_cli.main(["verify", "-w", "watch"]) == 2 and not snapshots_dir("watch").exists()  # BIP322_DIR: nothing there
-    assert f"no finalized snapshot under {snapshots_dir('watch')}" in capsys.readouterr().err
+    assert f"no finalized snapshot under {elsewhere / 'co' / 'watch'}" in capsys.readouterr().err
+    assert audit_cli.main(["verify", "-w", "watch"]) == 2 and not wallet_dir("watch").exists()  # BIP322_DIR: nothing there
+    assert f"no finalized snapshot under {wallet_dir('watch')}" in capsys.readouterr().err
     assert audit_cli.main(["stamp", "-w", "watch"]) == 0
     for argv in (["holdings", "-w", "x", "bc1q"], ["finalize", "-w", "x", "--dir", "d"], ["prove", "--dir", "d", "-w", "x", "bc1q"]):
         audit_cli.build_parser().parse_args(argv)  # accepted after the command
@@ -609,7 +611,7 @@ def test_writes_are_atomic_and_unreadable_proofs_files_are_reported(
     assert not [p.name for p in directory.iterdir() if p.name.endswith(".tmp")] and not list(tmp_path.glob(".*.tmp"))
     capsys.readouterr()
     # the wallet's snapshots: one whole proofs file, one truncated (and one under the name earlier versions used)
-    ledger = snapshots_dir("watch")
+    ledger = wallet_dir("watch")
     (ledger / "a").mkdir(parents=True)
     (ledger / "a" / "proofs.json").write_text(good)
     (ledger / "b").mkdir()
@@ -650,16 +652,26 @@ def test_docs_name_every_command_module_and_exit_code():
     assert "prove" in audit_cli.__doc__ and "holdings" in audit_cli.__doc__
 
 
+def _snapshot(wallet: Path, name: str = "2026-01-01-1") -> Path:
+    """A snapshot directory in a wallet's, as far as the tree is concerned: its snapshot.json."""
+    (wallet / name).mkdir(parents=True)
+    (wallet / name / "snapshot.json").write_text("{}")
+    return wallet / name
+
+
 def test_holders_above_wallets(tmp_path, monkeypatch):
     """The tree: <holder>/<wallet>/; a wallet is found under whichever holder it is, a new one is made under the holder meant."""
     from bip322audit.datadir import current_holder, holder_statements_dir, wallet_dir, wallet_dirs
 
     monkeypatch.setenv("BIP322_DIR", str(tmp_path))
-    (tmp_path / "company" / "treasury" / "snapshots").mkdir(parents=True)
+    _snapshot(tmp_path / "company" / "treasury")
     (tmp_path / "company" / "statements").mkdir()
-    (tmp_path / "jonas" / "personal" / "statements").mkdir(parents=True)
+    (tmp_path / "jonas" / "personal").mkdir(parents=True)
+    (tmp_path / "jonas" / "personal" / "history.json").write_text("{}")  # a history alone marks a wallet too
     (tmp_path / "notes").mkdir()  # a directory written there for something else: neither holder nor wallet
     (tmp_path / "company" / "out").mkdir()
+    (tmp_path / "company" / "out" / "x.txt").write_text("")
+    (tmp_path / "company" / "treasury" / "statements" / "2025").mkdir(parents=True)  # the wallet's statements of earlier versions: not read
     assert holders() == ["company", "jonas"] and wallets() == ["personal", "treasury"]
     assert wallet_dirs() == {"personal": tmp_path / "jonas" / "personal", "treasury": tmp_path / "company" / "treasury"}
     assert holder_of_wallet("treasury") == "company" and holder_of_wallet("new") is None
@@ -678,16 +690,29 @@ def test_holders_above_wallets(tmp_path, monkeypatch):
     (tmp_path / "bip322.toml").write_text('holder = "jonas"\n')
     assert current_holder() == "jonas"
     (tmp_path / "bip322.toml").write_text("")
-    import shutil
-
     shutil.rmtree(tmp_path / "jonas")
     assert current_holder() == "company"
-    (tmp_path / "jonas" / "treasury" / "snapshots").mkdir(parents=True)
+    _snapshot(tmp_path / "jonas" / "treasury")
     with pytest.raises(ConfigError, match="wallet treasury is under two holders, company and jonas"):
         wallets()
     for bad in ("snapshots", "statements", "../x"):
         with pytest.raises(ConfigError, match="not usable as a directory name"):
             holder_dir(bad)
+    shutil.rmtree(tmp_path / "jonas")
+    # the layout of earlier versions, snapshots under <wallet>/snapshots/, is refused with the command that mends it
+    old = tmp_path / "company" / "cold" / "snapshots"
+    old.mkdir(parents=True)
+    with pytest.raises(ConfigError, match=f"Move them up: rmdir {old}"):
+        wallets()
+    _snapshot(old, "2026-02-02-2")
+    with pytest.raises(ConfigError, match=f"Move them up: mv {old}/\\* {old.parent}/ && rmdir {old}"):
+        wallet_dir("treasury")
+    subprocess.run(f"mv {old}/* {old.parent}/ && rmdir {old}", shell=True, check=True)
+    assert wallets() == ["cold", "treasury"] and wallet_of_directory(tmp_path / "company" / "cold" / "2026-02-02-2") == "cold"
+    assert (
+        wallet_of_directory(tmp_path / "company" / "cold") is None
+        and wallet_of_directory(tmp_path / "company" / "statements" / "x") is None
+    )
 
 
 def test_holders_in_the_config():
@@ -712,9 +737,9 @@ def test_settings_per_holder(tmp_path, monkeypatch):
     from bip322audit.datadir import holder_of, use_holder
 
     monkeypatch.setenv("BIP322_DIR", str(tmp_path))
-    (tmp_path / "company" / "treasury" / "snapshots").mkdir(parents=True)
-    (tmp_path / "company" / "cold" / "snapshots").mkdir(parents=True)
-    (tmp_path / "jonas" / "personal" / "snapshots").mkdir(parents=True)
+    _snapshot(tmp_path / "company" / "treasury")
+    _snapshot(tmp_path / "company" / "cold")
+    _snapshot(tmp_path / "jonas" / "personal")
     config = Config(
         {
             "text": "Proof {date}",
@@ -747,7 +772,7 @@ def test_a_holders_text_signs_its_wallets_snapshots(tmp_path, wallet, funded, mo
     (root / "bip322.toml").write_text('holder = "h"\ntext = "Proof {date}"\n[holders.h]\ntext = "Company AB (556123-4567) {date}"\n')
     assert audit_cli.main(["snapshot", "-w", "watch"]) == 0
     directory = Path(capsys.readouterr().out.strip())
-    assert directory.parent == root / "h" / "watch" / "snapshots"
+    assert directory.parent == root / "h" / "watch"
     assert (directory / "message.txt").read_text().startswith("Company AB (556123-4567) 20")
     assert audit_cli.main(["snapshot", "-w", "watch", "--text", "Audit {date}", "--force"]) == 0
     assert (Path(capsys.readouterr().out.strip()) / "message.txt").read_text().startswith("Audit 20")

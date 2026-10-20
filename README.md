@@ -11,7 +11,7 @@ Two roles:
 
 * **Owner**: `snapshot` (or `prove`, for given addresses), sign on the
   cosigners' devices, `finalize`. Needs a node with the wallet loaded
-  (watch-only is enough). Everything lands under `<wallet>/snapshots/` in the directory `bip322 init` made.
+  (watch-only is enough). Everything lands in `<holder>/<wallet>/` in the directory `bip322 init` made.
 * **Auditor**: `verify`, against any node that has the chain; `holdings` to
   look up single outputs or addresses. No wallet, no index, no key material,
   and nothing about the owner's wallet beyond the proven addresses.
@@ -55,7 +55,7 @@ For "we controlled these coins as of block N", repeatable whenever coins move:
 ```sh
 bip322 init -w treasury               # once: this directory holds the wallets (bip322.toml)
 bip322 audit snapshot                 # the node wallet's own descriptor
-#   -> treasury/snapshots/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
+#   -> company/treasury/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
 #   sign every PSBT on the cosigners' devices, put the results into its signed/
 bip322 audit checksigners             # new devices: every cosigner's signature alone, every threshold combination
 bip322 audit finalize                 # the newest snapshot -> treasury-2026-09-14-912345-proofs.json (hand this to the auditor)
@@ -102,8 +102,8 @@ summary and `snapshot.json` say which (`descriptor`), and under `left_out`
 how many outputs and how much the node listed that the snapshot does not, and
 why: coins of another descriptor in the same node wallet, coins on addresses
 an earlier snapshot proves. Descriptors of a kind it does not cover are named
-in `notes`. The snapshot's directory is `<date>-<height>` under the wallet's
-`snapshots/`, with `-2`, `-3` ... when that exists; `-o DIR --force` rewrites
+in `notes`. The snapshot's directory is `<date>-<height>` in the wallet's
+directory, with `-2`, `-3` ... when that exists; `-o DIR --force` rewrites
 a snapshot that holds no signed PSBTs and no proofs file yet, and nothing else.
 
 The proofs file names addresses, not a wallet: the message, the stamp, and per
@@ -210,21 +210,24 @@ mkdir ~/bip322 && cd ~/bip322
 bip322 init -w company/treasury       # -> bip322.toml: holder = "company", wallet = "treasury", every other key a comment
 ```
 
-Inside, one directory per holder, and one per wallet under it:
+Inside, one directory per holder, and one per wallet under it; a wallet's
+directory holds its snapshots and nothing else:
 
 ```
 ~/bip322/
   bip322.toml
   company/                                # a holder
+    statements/                           # bip322-report's: the holder's statements over its wallets
     treasury/                             # a wallet of the holder
-      snapshots/
-        2026-03-02-880412/                # a prove during the year
-        2026-09-14-912345/                # a full snapshot
-          snapshot.json  message.txt  to_sign/  signed/
-          treasury-2026-09-14-912345-proofs.json
-      statements/                         # bip322-report's: the wallet's statements
-    statements/                           # bip322-report's: the holder's ledgers over its wallets
+      2026-03-02-880412/                  # a prove during the year
+      2026-09-14-912345/                  # a full snapshot
+        snapshot.json  message.txt  to_sign/  signed/
+        treasury-2026-09-14-912345-proofs.json
+      history.json                        # bip322-report's: the history last read from the node
 ```
+
+Versions before 0.22 kept the snapshots under `<wallet>/snapshots/`; such
+a directory is refused, with the `mv` that moves them up.
 
 `-w NAME` names the wallet: its directory, under whichever holder it is
 (a wallet's name is unique in the tree), and the node wallet of the same
@@ -272,7 +275,7 @@ Over the years the snapshots accumulate, and their proofs files are what
 
 ```sh
 bip322 audit snapshot --skip-proven
-#   -> snapshots/<date>-<height>/ with only the outputs no earlier snapshot of the wallet proves (new change, new deposits)
+#   -> <date>-<height>/ with only the outputs no earlier snapshot of the wallet proves (new change, new deposits)
 bip322 audit snapshot --text "Proof of control, audit FY2026, {date}"
 #   -> every output the wallet holds, after the period's end, under a message that names the audit
 ```

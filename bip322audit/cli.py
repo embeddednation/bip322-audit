@@ -41,8 +41,8 @@ from .datadir import (
     proofs_file_name,
     snapshot_directory,
     snapshot_name,
-    snapshots_dir,
     use_data_dir,
+    wallet_dir,
     wallet_of_cwd,
     wallet_of_directory,
     write_config,
@@ -160,7 +160,7 @@ def _proven(wallet: str | None, skip_proven: bool) -> set[str] | None:
     if wallet is None:
         raise CLIError("--skip-proven reads the wallet's snapshots: name the wallet with -w NAME (or wallet = NAME in bip322.toml)")
     unreadable: list = []
-    proven = proven_addresses([snapshots_dir(wallet)], skipped=unreadable)
+    proven = proven_addresses([wallet_dir(wallet)], skipped=unreadable)
     for path, reason in unreadable:
         print(f"warning: {path} is not counted as proving anything: {reason}", file=sys.stderr)
     return proven
@@ -200,7 +200,7 @@ def _new_snapshot(args, *, source: str, addresses: list[str] | None, skip_proven
     if name is None and not args.output:  # the node's one loaded wallet names the directory; a UTXO-set scan has none to offer
         with contextlib.suppress(RpcError, KeyError, TypeError):
             name = config.wallet_of_node(str(cli.call("getwalletinfo")["walletname"]))
-    parent = snapshots_dir(name) if name is not None and not args.output else None
+    parent = wallet_dir(name) if name is not None and not args.output else None
     proven = _proven(name, skip_proven)
     notes: list[str] = []
     wallet = _wallet(args, cli, notes)
@@ -423,9 +423,7 @@ def _add_psbt_args(p: argparse.ArgumentParser, *, max_index: str) -> None:
 
 def _add_destination_args(p: argparse.ArgumentParser) -> None:
     """``--output`` and ``--force``, the same for snapshot and prove."""
-    p.add_argument(
-        "--output", "-o", metavar="DIR", help="write the snapshot here instead of under the wallet's snapshots/ as <date>-<height>"
-    )
+    p.add_argument("--output", "-o", metavar="DIR", help="write the snapshot here instead of in the wallet's directory as <date>-<height>")
     p.add_argument("--force", action="store_true", help="with -o: rewrite a snapshot that holds no signed PSBTs and no proofs file yet")
 
 
@@ -466,13 +464,13 @@ def _add_stamp_parser(sub) -> None:
 def _add_snapshot_parser(sub) -> None:
     p = sub.add_parser(
         "snapshot",
-        help="stamp, funded addresses, message and one PSBT per address, into the wallet's snapshots/",
+        help="stamp, funded addresses, message and one PSBT per address, into the wallet's directory",
         description=(
             "Take the snapshot: read the wallet descriptor from the node wallet (or --descriptor), choose the stamp block "
             "(tip - DEPTH), find the wallet's coins confirmed at that block "
             "(listunspent on the node wallet, or a scantxoutset of the descriptor), compose the message from the template "
             "plus the stamp line, and write snapshot.json, message.txt and to_sign/to_sign-NN.psbt per funded address into "
-            "<wallet>/snapshots/<date>-<height>/ in the data directory (the address of each PSBT is in snapshot.json). "
+            "<holder>/<wallet>/<date>-<height>/ in the data directory (the address of each PSBT is in snapshot.json). "
             "Sign the PSBTs on the cosigners' devices and put the results in its signed/."
         ),
     )
@@ -494,7 +492,7 @@ def _add_snapshot_parser(sub) -> None:
     p.add_argument(
         "--skip-proven",
         action="store_true",
-        help="leave out the addresses that the wallet's earlier snapshots already prove (their proofs files under snapshots/)",
+        help="leave out the addresses that the wallet's earlier snapshots already prove (the proofs files in its directory)",
     )
     _add_destination_args(p)
     p.set_defaults(
@@ -570,7 +568,7 @@ def _add_checksigners_parser(sub) -> None:
         "snapshot",
         metavar="SNAPSHOT",
         nargs="?",
-        help="the snapshot: its name under the wallet's snapshots/ (2026-09-14-912345), or a directory; default: the wallet's newest",
+        help="the snapshot: its name in the wallet's directory (2026-09-14-912345), or a directory; default: the wallet's newest",
     )
     p.add_argument("--wallet", "-w", dest="wallet_sub", metavar="NAME", help="the wallet (may also be given before the command)")
     p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the data directory (may also be given before the command)")
@@ -600,7 +598,7 @@ def _add_finalize_parser(sub) -> None:
         "snapshot",
         metavar="SNAPSHOT",
         nargs="?",
-        help="the snapshot: its name under the wallet's snapshots/ (2026-09-14-912345), or a directory; default: the wallet's newest",
+        help="the snapshot: its name in the wallet's directory (2026-09-14-912345), or a directory; default: the wallet's newest",
     )
     _add_node_args(p)
     p.add_argument("--offline", action="store_true", help="do not ask the node wallet for the spend history")
@@ -633,7 +631,7 @@ def _add_verify_parser(sub) -> None:
         "snapshot",
         metavar="PROOFS",
         nargs="?",
-        help="a proofs file, a snapshot directory, or a snapshot's name under the wallet's snapshots/; default: the wallet's newest finalized",
+        help="a proofs file, a snapshot directory, or a snapshot's name in the wallet's directory; default: the wallet's newest finalized",
     )
     _add_node_args(p)
     p.add_argument("--offline", action="store_true", help="verify the signatures only (no node)")
@@ -661,7 +659,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bip322-audit",
         description=f"Proof of control of a wallet's coins at a point in time: BIP-322 proofs plus on-chain checks through bitcoin-cli ({SPEC}). "
-        "Snapshots and their proofs files live under <wallet>/snapshots/ in the data directory: the one bip322 init made at or "
+        "Snapshots and their proofs files live in <holder>/<wallet>/ in the data directory: the one bip322 init made at or "
         "above the current directory (--dir or BIP322_DIR name another), whose bip322.toml holds the defaults.",
         epilog=EXIT_HELP + " verify: 0 the result is OK, 1 FAILED, 3 INCOMPLETE (nothing failed, but some listed output is not shown "
         "held at the stamp block).",

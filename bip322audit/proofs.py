@@ -1,8 +1,8 @@
 """Proofs files in a directory tree: finding them, and what they prove.
 
 Snapshots accumulate over time (one per audit, one per batch of newly created
-outputs) under a wallet's ``snapshots/`` directory; ``finalize`` leaves a
-proofs file in each.  Nothing here talks to a node.
+outputs) in a wallet's directory; ``finalize`` leaves a proofs file in each.
+Nothing here talks to a node.
 """
 
 from __future__ import annotations
@@ -16,11 +16,12 @@ __all__ = ["Outpoint", "addresses_in", "find_proofs", "is_proofs_file_name", "ou
 Outpoint = tuple[str, int]
 
 
-def find_proofs(roots: Iterable[Path | str], *, max_depth: int = 3, skipped: list | None = None) -> list[tuple[Path, dict]]:
+def find_proofs(roots: Iterable[Path | str], *, max_depth: int = 1, skipped: list | None = None) -> list[tuple[Path, dict]]:
     """Every proofs file under the roots, oldest stamp first.
 
-    A root may be a snapshots directory, a single snapshot directory, or a
-    proofs file (``*-proofs.json``, or ``proofs.json`` as earlier versions named it).  Files that do not parse as a proofs document are
+    A root may be a wallet's directory (the snapshots in it), a single snapshot directory, or a
+    proofs file (``*-proofs.json``, or ``proofs.json`` as earlier versions named it); nothing deeper
+    is looked at.  Files that do not parse as a proofs document are
     skipped; pass a list as ``skipped`` to learn which, as ``(path, reason)``
     (a truncated file must not silently mean "nothing proven").  Returns ``(path, document)`` pairs,
     each file once however many roots reach it, ordered by stamp height, then ``finalized_utc``, then

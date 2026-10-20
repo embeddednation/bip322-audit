@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.22.0 (2026-10-20)
+
+A wallet's directory holds its snapshots and its history, nothing else:
+`<holder>/<wallet>/<date>-<height>/` beside `<holder>/<wallet>/history.json`,
+where `<holder>/<wallet>/snapshots/<date>-<height>/` was. The wallet's own
+`statements/` goes with bip322-report's per-wallet statement; the holder's
+`statements/` stays. A wallet is recognised by a snapshot or a history in
+it, and is made by its first snapshot; a snapshot's name resolves in the
+wallet's directory. A wallet laid out as before, with a `snapshots/`, is
+refused with the command that moves its snapshots up
+(`mv <wallet>/snapshots/* <wallet>/ && rmdir <wallet>/snapshots`); an old
+`<wallet>/statements/` is simply not read. `datadir` loses `snapshots_dir`
+and `statements_dir` and gains `HISTORY_FILE`; `find_proofs` looks one level
+below a root, no deeper, so copies of proofs files beside old statements are
+not found twice.
+
 ## 0.21.0 (2026-10-20)
 
 `checksigners [SNAPSHOT]`: bip322-core's device health check over a

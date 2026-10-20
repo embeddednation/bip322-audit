@@ -9,7 +9,7 @@ from bip322core.psbt import parse_psbt
 
 from bip322audit._version import __version__
 from bip322audit.audit import AuditError, collect_psbts, collect_spends, finalize_snapshot, format_report, load_proofs, verify_proofs
-from bip322audit.datadir import proofs_file_in, snapshots_dir
+from bip322audit.datadir import proofs_file_in, wallet_dir
 from bip322audit.rpc import BitcoinCli, RpcError, to_sat
 from bip322audit.snapshot import coins_from_listunspent, coins_from_scantxoutset, take_snapshot, write_snapshot
 from bip322audit.stamp import Stamp, check_stamp, compose_message, fetch_stamp, iso_utc, parse_stamp
@@ -476,8 +476,10 @@ def test_snapshot_skips_addresses_earlier_snapshots_prove(tmp_path, wallet, fund
     """The wallet's snapshots; a later snapshot lists only addresses none of them proves yet, and joins them."""
     from bip322audit.proofs import find_proofs, proven_addresses, proven_outpoints
 
-    ledger = snapshots_dir("watch")
-    first = _signed_snapshot(ledger / "2026-01-01-994", wallet, funded, signer_expressions)  # helper appends /snapshot
+    ledger = wallet_dir("watch")
+    first = _signed_snapshot(
+        ledger, wallet, funded, signer_expressions
+    )  # the helper writes <wallet>/snapshot/: one snapshot in the wallet's directory
     (first / "watch-2026-01-01-994-proofs.json").write_text(json.dumps(finalize_snapshot(first)))
     assert len(find_proofs([ledger])) == 1 and len(proven_outpoints([ledger])) == 3 and proven_addresses([ledger]) == set(funded)
     assert find_proofs([first / "watch-2026-01-01-994-proofs.json"]) == find_proofs([first]) == find_proofs([ledger])
@@ -522,7 +524,7 @@ def test_prove_addresses_that_hold_nothing_yet(tmp_path, wallet, funded, signer_
     import bip322audit.cli as audit_cli
 
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
-    ledger = snapshots_dir("watch")
+    ledger = wallet_dir("watch")
     assert audit_cli.main(["-w", "watch", "prove", change]) == 0
     out, err = capsys.readouterr()
     bundle = Path(out.strip())

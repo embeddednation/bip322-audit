@@ -99,10 +99,12 @@ credentials are what is trusted and the tool holds none. The commands are
   representation and from reconciling spends between snapshots, which the
   recorded spends support. The owner's `snapshot.json` keeps the descriptor
   and the derivation paths.
-* **Device health check.** `bip322 checksigners` takes the devices' PSBT files,
-  shows the script behind the input and its mapping back to the address,
-  verifies each cosigner's signature alone, and finalizes and verifies one
-  proof per threshold-sized combination. `decodesignature` opens any proof
+* **Device health check.** `checksigners` reads a snapshot's PSBTs as
+  `finalize` does and runs bip322-core's check on each address: the script
+  behind the input and its mapping back to the address, each cosigner's
+  signature alone, and one finalized and verified proof per threshold-sized
+  combination. The check itself lives in bip322-core, which needs no tree;
+  `bip322 checksigners FILE...` runs it on loose PSBT files. `decodesignature` opens any proof
   string into labelled witness elements (taproot-aware).
 
 ## Exit codes

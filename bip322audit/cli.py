@@ -24,10 +24,14 @@ from pathlib import Path
 from bip322core._version import SPEC
 from bip322core.cli import CLIError, add_help_command, emit
 from bip322core.core import BIP322Error
+from bip322core.engines import available_engines, check_engines
+from bip322core.psbt import combine_psbts
+from bip322core.report import format_signers_text
+from bip322core.signers import check_signers
 from bip322core.wallet import Wallet, wallet_from_file
 
 from . import TOOL
-from .audit import EXIT_CODES, AuditError, finalize_snapshot, format_report, load_proofs, verify_proofs
+from .audit import EXIT_CODES, AuditError, finalize_snapshot, format_report, load_proofs, scan_psbts, verify_proofs
 from .datadir import (
     Config,
     ConfigError,
@@ -256,6 +260,23 @@ def _snapshot_to_work_on(args, config: Config, *, finalized: bool | None) -> tup
         name = only_wallet()  # the one wallet in the data directory needs no naming
     directory = snapshot_directory(given, name, finalized=finalized)
     return directory, name if _opt(args, "wallet") is not None else (wallet_of_directory(directory) or name)
+
+
+def cmd_checksigners(args) -> int:
+    """bip322-core's device health check over a snapshot's PSBTs, read and grouped by address as finalize reads them."""
+    config = Config.load()
+    directory, _ = _snapshot_to_work_on(args, config, finalized=None)
+    groups, ignored = scan_psbts(directory)
+    for note in ignored:
+        print(f"ignored {note}", file=sys.stderr)
+    if not groups:
+        raise CLIError(f"no PSBT in {directory} (its to_sign/, signed/ or root)")
+    network = network_of(str(load_snapshot(directory).get("chain")))
+    engines = [e.strip() for e in args.engines.split(",") if e.strip()] if args.engines else available_engines()
+    check_engines(engines)
+    reports = [check_signers(combine_psbts([p for _, p in found]), engines=engines, network=network) for found in groups.values()]
+    emit(json.dumps(reports, indent=2) if args.json else format_signers_text(reports), args.output)
+    return 0 if all(r["ok"] for r in reports) else 1
 
 
 def cmd_finalize(args) -> int:
@@ -532,6 +553,36 @@ def _add_prove_parser(sub) -> None:
     p.set_defaults(func=cmd_prove, examples=["prove bc1q...", "-w treasury prove bc1q... --text 'Proof of control {date}'"])
 
 
+def _add_checksigners_parser(sub) -> None:
+    p = sub.add_parser(
+        "checksigners",
+        help="device health check of a snapshot's signed PSBTs: every cosigner alone, every threshold combination",
+        description=(
+            "Read every PSBT in the snapshot's to_sign/, signed/ and root, group them by address and combine each address's, as "
+            "finalize does, then run bip322 checksigners on each: rebuild the script behind the input and show how it hashes back "
+            "to the scriptPubKey and address, verify each cosigner's signature on its own, and finalize and verify one proof per "
+            "threshold-sized combination of cosigners, showing the witness each assembled. For a new set of devices, before their "
+            "first finalize. No node is used. Exit 0 when, for every address, the script matches, every signer is valid and every "
+            "combination verifies; 1 when one does not; 2 when the check could not run."
+        ),
+    )
+    p.add_argument(
+        "snapshot",
+        metavar="SNAPSHOT",
+        nargs="?",
+        help="the snapshot: its name under the wallet's snapshots/ (2026-09-14-912345), or a directory; default: the wallet's newest",
+    )
+    p.add_argument("--wallet", "-w", dest="wallet_sub", metavar="NAME", help="the wallet (may also be given before the command)")
+    p.add_argument("--dir", dest="dir_sub", metavar="DIR", help="the data directory (may also be given before the command)")
+    p.add_argument("--engines", default=None, help="comma separated bip322 engines (default: all installed)")
+    p.add_argument("--json", action="store_true", help="JSON report, one per address, including every combination's proof")
+    p.add_argument("--output", "-o", metavar="FILE", help="write the report here instead of stdout")
+    p.set_defaults(
+        func=cmd_checksigners,
+        examples=["checksigners", "checksigners 2026-09-14-912345", "-w treasury checksigners --json -o signers-2026-09-14.json"],
+    )
+
+
 def _add_finalize_parser(sub) -> None:
     p = sub.add_parser(
         "finalize",
@@ -624,12 +675,15 @@ def build_parser() -> argparse.ArgumentParser:
         _add_snapshot_parser,
         _add_holdings_parser,
         _add_prove_parser,
+        _add_checksigners_parser,
         _add_finalize_parser,
         _add_verify_parser,
     ):
         add(sub)  # in the order the commands are listed by --help
     add_help_command(
-        "bip322-audit", sub, {"Setup": ["init"], "Workflow": ["stamp", "snapshot", "prove", "finalize", "verify", "holdings", "help"]}
+        "bip322-audit",
+        sub,
+        {"Setup": ["init"], "Workflow": ["stamp", "snapshot", "prove", "checksigners", "finalize", "verify", "holdings", "help"]},
     )
     return parser
 

@@ -751,3 +751,29 @@ def test_a_holders_text_signs_its_wallets_snapshots(tmp_path, wallet, funded, mo
     assert (directory / "message.txt").read_text().startswith("Company AB (556123-4567) 20")
     assert audit_cli.main(["snapshot", "-w", "watch", "--text", "Audit {date}", "--force"]) == 0
     assert (Path(capsys.readouterr().out.strip()) / "message.txt").read_text().startswith("Audit 20")
+
+
+def test_checksigners_takes_the_snapshot_as_finalize_does(bundle, signer_expressions, tmp_path, monkeypatch, capsys):
+    """bip322 audit checksigners [SNAPSHOT]: core's device health check over the snapshot's PSBTs, one report per address."""
+    from bip322core.dev.signing import sign_psbt
+    from bip322core.psbt import parse_psbt
+
+    (bundle / "signed" / "notes.txt").write_text("hello")
+    assert audit_cli.main(["checksigners", str(bundle)]) == 1  # the fixture's third cosigner has not signed: not every device checks out
+    out, err = capsys.readouterr()
+    assert out.count("RESULT: FAILED") == 1 and "ignored signed/notes.txt" in err
+    for unsigned in sorted((bundle / "to_sign").glob("*.psbt")):  # the third device signs too
+        psbt = parse_psbt(unsigned.read_text())
+        assert sign_psbt(psbt, signer_expressions[2]) == 1
+        (bundle / "signed" / unsigned.name.replace(".psbt", "-cc2-part.psbt")).write_text(psbt.to_string() + "\n")
+    assert audit_cli.main(["checksigners", str(bundle)]) == 0 and capsys.readouterr().out.count("RESULT: OK") == 1
+    assert audit_cli.main(["checksigners", str(bundle), "--json", "-o", str(tmp_path / "signers.json")]) == 0
+    reports = json.loads((tmp_path / "signers.json").read_text())
+    assert len(reports) == 2 and all(r["ok"] and len(r["combinations"]) == 3 for r in reports)  # every pair of a 2-of-3
+    monkeypatch.chdir(bundle)  # inside the snapshot's directory, as finalize: that snapshot
+    assert audit_cli.main(["checksigners"]) == 0
+    monkeypatch.chdir(tmp_path)
+    assert audit_cli.main(["checksigners", str(tmp_path / "nowhere")]) == 2 and "no such snapshot" in capsys.readouterr().err
+    for path in [*bundle.glob("*.psbt"), *(bundle / "to_sign").glob("*.psbt"), *(bundle / "signed").glob("*.psbt")]:
+        path.unlink()
+    assert audit_cli.main(["checksigners", str(bundle)]) == 2 and "no PSBT in" in capsys.readouterr().err

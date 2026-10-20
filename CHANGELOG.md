@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.21.0 (2026-10-20)
+
+`checksigners [SNAPSHOT]`: bip322-core's device health check over a
+snapshot's PSBTs, the snapshot named as `finalize` names it (its name under
+the wallet's snapshots/, a directory, or the wallet's newest; the current
+directory when run inside one). The PSBTs are read from the snapshot's
+`to_sign/`, `signed/` and root, grouped by address and combined, as
+`finalize` reads them; one report per address, one RESULT line, `--json`
+for the reports with every combination's proof. Exit 0 when every address
+passes, 1 when a signer or a combination fails, 2 when the check could not
+run. `scan_psbts` is public in `bip322audit.audit`.
+
 ## 0.20.0 (2026-10-16)
 
 Settings per holder: a key in a `[holders.KEY]` table (`text`, `cli`,

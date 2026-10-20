@@ -16,8 +16,8 @@ Two roles:
   look up single outputs or addresses. No wallet, no index, no key material,
   and nothing about the owner's wallet beyond the proven addresses.
 
-The commands: `stamp`, `snapshot`, `prove`, `finalize`, `verify`, `holdings`,
-`help`. With bip322-core installed they are also reachable as `bip322 audit ...`.
+The commands: `stamp`, `snapshot`, `prove`, `checksigners`, `finalize`,
+`verify`, `holdings`, `help`. With bip322-core installed they are also reachable as `bip322 audit ...`.
 
 ## Install
 
@@ -57,12 +57,13 @@ bip322 init -w treasury               # once: this directory holds the wallets (
 bip322 audit snapshot                 # the node wallet's own descriptor
 #   -> treasury/snapshots/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
 #   sign every PSBT on the cosigners' devices, put the results into its signed/
+bip322 audit checksigners             # new devices: every cosigner's signature alone, every threshold combination
 bip322 audit finalize                 # the newest snapshot -> treasury-2026-09-14-912345-proofs.json (hand this to the auditor)
 bip322 audit verify --report audit-report.json
 ```
 
 The wallet is `-w NAME`, else the wallet directory the command runs in, else
-`wallet` in `bip322.toml`, else the node's one loaded wallet; `finalize` and `verify` take a snapshot's name
+`wallet` in `bip322.toml`, else the node's one loaded wallet; `checksigners`, `finalize` and `verify` take a snapshot's name
 (`finalize 2026-09-14-912345`) or a path when the newest is not the one
 meant, and `verify` a proofs file. `-o DIR` writes a snapshot elsewhere.
 See [Where everything lives](#where-everything-lives).

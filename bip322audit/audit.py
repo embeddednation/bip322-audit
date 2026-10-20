@@ -57,7 +57,7 @@ _TXID_RE = re.compile(r"[0-9a-f]{64}")
 # --------------------------------------------------------------------------- #
 
 
-def _scan_psbts(directory: Path) -> tuple[dict[str, list[tuple[Path, BIP322PSBT]]], list[str]]:
+def scan_psbts(directory: Path) -> tuple[dict[str, list[tuple[Path, BIP322PSBT]]], list[str]]:
     """PSBTs by to_sign txid with the file each came from, and what in ``to_sign/`` and ``signed/`` was not usable."""
     groups: dict[str, list[tuple[Path, BIP322PSBT]]] = {}
     ignored: list[str] = []
@@ -83,7 +83,7 @@ def _scan_psbts(directory: Path) -> tuple[dict[str, list[tuple[Path, BIP322PSBT]
 
 def collect_psbts(directory: Path) -> dict[str, list[BIP322PSBT]]:
     """Every parseable PSBT in ``to_sign/`` and ``signed/`` (and the snapshot's root), grouped by to_sign txid."""
-    return {txid: [psbt for _, psbt in found] for txid, found in _scan_psbts(directory)[0].items()}
+    return {txid: [psbt for _, psbt in found] for txid, found in scan_psbts(directory)[0].items()}
 
 
 def finalize_snapshot(
@@ -116,7 +116,7 @@ def finalize_snapshot(
     document.
     """
     snapshot = load_snapshot(directory)
-    groups, ignored = _scan_psbts(directory)
+    groups, ignored = scan_psbts(directory)
     notes = notes if notes is not None else []
     message = snapshot["message"].encode("utf-8")
     wanted = {entry["to_sign_txid"] for entry in snapshot["addresses"]}

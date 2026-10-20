@@ -500,7 +500,7 @@ def sample_config(holder: str | None = None, wallet: str | None = None) -> str:
             "",
             f"{'' if on else '# '}[wallets.{_key(name)}]",
             _row(f'node = "{name}-2of3-main"', "the node wallet, when its name is not the directory's"),
-            _row("dust = 500", "a key given here beats the one above, for this wallet"),
+            _row(f'text = "Proof of control, {name}, {{date}}"', "a key given here beats the one above, for this wallet"),
         ]
     lines += [
         "",

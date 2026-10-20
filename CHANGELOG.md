@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.1 (2026-10-20)
+
+The sample `bip322.toml` shows `text` under `[wallets.NAME]` where it showed
+`dust`: bip322-report's statement is the holder's and reads `dust`, `theme`,
+`heading` and `explorer` from `[holders.KEY]` and the top level, not from a
+wallet's table, which carries what is read per wallet.
+
 ## 0.22.0 (2026-10-20)
 
 A wallet's directory holds its snapshots and its history, nothing else:

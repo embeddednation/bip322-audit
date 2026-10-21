@@ -186,6 +186,17 @@ class FakeCli(BitcoinCli):
                         "confirmations": self.tip_height - height + 1,
                         "decoded": {"vin": [{"txid": t, "vout": v}], "vout": []},
                     }
+            for address, t, v, amount, height in self._utxos():  # the funding transactions are the wallet's too
+                if t == params[0]:
+                    vout = [{"value": "0.00000001", "n": i, "scriptPubKey": {"address": "bc1qother"}} for i in range(v)]
+                    vout.append({"value": f"{amount / 1e8:.8f}", "n": v, "scriptPubKey": {"address": address}})
+                    return {
+                        "txid": t,
+                        "blockhash": fake_hash(height),
+                        "blockheight": height,
+                        "confirmations": self.tip_height - height + 1,
+                        "decoded": {"vin": [{"txid": "aa" * 32, "vout": 0}], "vout": vout},
+                    }
             raise RpcError("Invalid or non-wallet transaction id")
         raise RpcError(f"fake node: unsupported {method}")
 
@@ -243,12 +254,70 @@ def test_take_snapshot_checks_chain_and_message_rules(wallet, funded):
     with pytest.raises(ValueError, match="hardware signer"):
         take_snapshot(FakeCli(wallet, funded), wallet, " leading space {date}")
     snapshot, psbts = take_snapshot(FakeCli(wallet, funded), wallet, " leading space {date}", strict_message=False)
-    assert snapshot.message.startswith(" leading space " + iso_utc(T0 + 994 * 600)[:10] + "\nblock: 994 ")
+    # no block chosen: the last block before today 00:00 UTC, which on this chain of 2023 is the tip
+    assert snapshot.message.startswith(" leading space " + iso_utc(T0 + 1000 * 600)[:10] + "\nblock: 1000 ")
     assert set(psbts) == set(funded) and snapshot.total_sat == 85_000_000 and snapshot.source == "listunspent"
+    assert snapshot.spent_since == {"outputs": 0, "amount_sat": 0, "amount_btc": "0.00000000"}
     snapshot2, _ = take_snapshot(FakeCli(wallet, funded, rpcwallet=False), wallet, "x")
     assert snapshot2.source == "scantxoutset" and snapshot2.total_sat == 85_000_000
     with pytest.raises(RpcError, match="no coins"):
         take_snapshot(FakeCli(wallet, {}), wallet, "x")
+
+
+def test_snapshot_at_a_block_lists_what_the_wallet_spent_since(wallet, funded, monkeypatch, capsys):
+    """The year-end case: the stamp block lies back, and a coin spent after it was the wallet's at that block all the same."""
+    from datetime import UTC, datetime
+
+    import bip322audit.cli as audit_cli
+    from bip322audit.stamp import choose_stamp, header_at, header_before
+
+    cli = FakeCli(wallet, funded, tip=1020)
+    address, txid, vout, amount, height = next(u for u in cli._utxos() if u[4] == 990)  # noqa: SLF001
+    cli.spent = {(txid, vout): 1010}  # spent at block 1010
+
+    snapshot, psbts = take_snapshot(cli, wallet, "x", at=1000)  # by height: the coin was still there
+    assert snapshot.stamp.height == 1000 and snapshot.total_sat == 85_000_000 and set(psbts) == set(funded)
+    listed = {(u["txid"], u["vout"]): u for a in snapshot.addresses for u in a["utxos"]}
+    assert listed[(txid, vout)]["height"] == 990 and listed[(txid, vout)]["blockhash"] == fake_hash(990)
+    assert snapshot.spent_since == {"outputs": 1, "amount_sat": 50_000_000, "amount_btc": "0.50000000"}
+    assert snapshot.to_dict()["spent_since"]["outputs"] == 1 and snapshot.tip_height == 1020
+    assert ("listsinceblock", fake_hash(1000)) in cli.calls and ("gettransaction", txid, True, True) in cli.calls
+
+    by_hash, _ = take_snapshot(cli, wallet, "x", at=fake_hash(1010))  # by hash; spent at that very block: not held at it
+    assert by_hash.stamp.height == 1010 and by_hash.total_sat == 35_000_000 and by_hash.spent_since["outputs"] == 0
+    before, _ = take_snapshot(cli, wallet, "x", before=datetime.fromtimestamp(T0 + 995 * 600, UTC))  # the last block before: 994
+    assert before.stamp.height == 994 and before.total_sat == 85_000_000 and before.spent_since["outputs"] == 1
+    default, _ = take_snapshot(cli, wallet, "x")  # the night before, here the tip: the coin is spent by then
+    assert default.stamp.height == 1020 and default.total_sat == 35_000_000 and default.spent_since["outputs"] == 0
+    lines: list[str] = []
+    scanned, _ = take_snapshot(
+        FakeCli(wallet, funded, tip=1020, rpcwallet=False, spent=cli.spent), wallet, "x", at=1000, progress=lines.append
+    )
+    assert scanned.total_sat == 35_000_000 and any("spent since block 1000 is not listed" in x for x in lines)  # no history to ask
+    with pytest.raises(ValueError, match="one way"):
+        take_snapshot(cli, wallet, "x", at=1000, depth=6)
+    with pytest.raises(RpcError, match="not in the main chain"):
+        take_snapshot(cli, wallet, "x", at=2000)
+    with pytest.raises(RpcError, match="no coins"):
+        take_snapshot(cli, wallet, "x", before=datetime(2023, 11, 21, tzinfo=UTC))  # block 874: nothing confirmed yet
+
+    assert header_at(cli, "1000") == header_at(cli, fake_hash(1000)) == {"height": 1000, "hash": fake_hash(1000), "time": T0 + 600_000}
+    assert header_before(cli, datetime(2023, 11, 21, tzinfo=UTC))["height"] == 874
+    assert header_before(cli, datetime(2099, 1, 1, tzinfo=UTC))["height"] == 1020  # ahead of the chain: the tip
+    assert header_before(cli, datetime(2099, 1, 1, tzinfo=UTC), tip_height=1005)["height"] == 1005  # no higher than the caller's tip
+    assert header_before(cli, datetime.fromtimestamp(T0 - 5, UTC))["height"] == 0  # before the chain: its first block
+    assert choose_stamp(cli, depth=6).height == 1014 and choose_stamp(cli).height == 1020 and choose_stamp(cli, at=1000).height == 1000
+
+    # the commands: stamp, and snapshot into the wallet's directory, named for the stamp block
+    monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: cli)
+    assert audit_cli.main(["stamp"]) == 0 and capsys.readouterr().out.startswith(f"block: 1020 {fake_hash(1020)} ")
+    assert audit_cli.main(["stamp", "--before", "2023-11-21"]) == 0 and capsys.readouterr().out.startswith("block: 874 ")
+    assert audit_cli.main(["stamp", "--at", fake_hash(1000)]) == 0 and capsys.readouterr().out.startswith("block: 1000 ")
+    assert audit_cli.main(["stamp", "--depth", "20"]) == 0 and capsys.readouterr().out.startswith("block: 1000 ")
+    assert audit_cli.main(["-w", "watch", "snapshot", "--at", "1000"]) == 0
+    out, err = capsys.readouterr()
+    assert Path(out.strip()) == wallet_dir("watch") / "2023-11-21-1000" and json.loads(err)["spent_since"]["outputs"] == 1
+    assert json.loads(err)["stamp"]["height"] == 1000 and json.loads(err)["utxos"] == 3
 
 
 def _signed_snapshot(tmp_path, wallet, funded, signer_expressions, cli=None) -> Path:
@@ -416,7 +485,7 @@ def test_cli_end_to_end_with_fake_node(tmp_path, wallet, funded, signer_expressi
         (out_dir / "signed" / Path(files[address]).name.replace(".psbt", "-signed.psbt")).write_text(psbt.to_string())
     assert audit_cli.main(["finalize", str(out_dir)]) == 0
     proofs = proofs_file_in(out_dir)
-    assert capsys.readouterr().out.strip() == str(proofs) and proofs.name.startswith("watch-") and proofs.name.endswith("-994-proofs.json")
+    assert capsys.readouterr().out.strip() == str(proofs) and proofs.name.startswith("watch-") and proofs.name.endswith("-1000-proofs.json")
     assert audit_cli.main(["verify", str(out_dir), "--report", str(tmp_path / "r.json")]) == 0
     text = capsys.readouterr().out
     assert "RESULT: OK" in text and json.loads((tmp_path / "r.json").read_text())["ok"]
@@ -503,7 +572,7 @@ def test_snapshot_skips_addresses_earlier_snapshots_prove(tmp_path, wallet, fund
     assert audit_cli.main(["-w", "watch", "snapshot", "--skip-proven"]) == 0
     out, err = capsys.readouterr()
     new_dir = Path(out.strip())
-    assert new_dir.parent == ledger and new_dir.name.endswith("-1014") and json.loads(err)["skipped_proven"] == 4
+    assert new_dir.parent == ledger and new_dir.name.endswith("-1020") and json.loads(err)["skipped_proven"] == 4
     assert json.loads(err)["utxos"] == 1 and (new_dir / "to_sign").is_dir()
 
 

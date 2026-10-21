@@ -4,8 +4,8 @@ Everything that talks to a node lives here (through ``bitcoin-cli``); the
 ``bip322core`` package stays pure and is used as a library:
 
 * ``init``      make a directory the data directory: ``bip322.toml``, with every key shown, to edit
-* ``snapshot``  stamp block, funded addresses, message, one BIP-322 PSBT per address
-* ``prove``     the same for given addresses, whether or not they hold coins yet
+* ``snapshot``  the wallet's coins at a block (the night before, ``--before`` an instant, ``--at`` a block), message, one BIP-322 PSBT per address
+* ``prove``     the same for given addresses, whether or not they hold coins yet, at a recent block
 * ``finalize``  collect the signed PSBTs, finalize, write the proofs file
 * ``verify``    BIP-322 verdicts, stamp check, UTXO checks, totals, report
 * ``holdings``  what outputs or addresses hold now, and at a block

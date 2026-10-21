@@ -5,6 +5,7 @@ or run refcheck/fetch.sh in a bip322-core checkout that is installed alongside.
 """
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,7 @@ def test_audit_workflow_on_regtest(core, regtest_wallet, signer_expressions, pri
     miner = BitcoinCli(core.cli_argv("miner"))
     watch = BitcoinCli(core.cli_argv("watch"))
     node = BitcoinCli(core.cli_argv())
+    node.call("setmocktime", int(time.time()) - 86400)  # the blocks are dated yesterday: today's default snapshot lies after them
     node.call("createwallet", "miner")
     mine_to = miner.call("getnewaddress")
     miner.call("generatetoaddress", 101, mine_to)
@@ -86,6 +88,8 @@ def test_audit_workflow_on_regtest(core, regtest_wallet, signer_expressions, pri
     assert snapshot.message.startswith("Audit 20") and parse_stamp(snapshot.message).height == 102
     scanned, _ = take_snapshot(node, regtest_wallet, "x", depth=6, source="scantxoutset")
     assert [a["utxos"] for a in scanned.addresses] == [a["utxos"] for a in snapshot.addresses]
+    tonight, _ = take_snapshot(watch, regtest_wallet, "x")  # no block chosen: the last block before today 00:00 UTC, the tip here
+    assert tonight.stamp.height == 108 and [a["utxos"] for a in tonight.addresses] == [a["utxos"] for a in snapshot.addresses]
 
     # ---- sign (software cosigners A and C), finalize, verify -------------------- #
     directory = tmp_path / "bundle"
@@ -141,6 +145,10 @@ def test_audit_workflow_on_regtest(core, regtest_wallet, signer_expressions, pri
     assert signed["complete"]
     node.call("sendrawtransaction", signed["hex"])
     miner.call("generatetoaddress", 1, mine_to)
+    # a snapshot taken now, at the old block, lists the coins that were there, the spent ones from the wallet's history
+    again, _ = take_snapshot(watch, regtest_wallet, "x", at=snapshot.stamp.height)
+    assert again.stamp == snapshot.stamp and [a["utxos"] for a in again.addresses] == [a["utxos"] for a in snapshot.addresses]
+    assert 1 <= again.spent_since["outputs"] <= 2 and again.spent_since["amount_sat"] >= 10_000_000
     report = verify_proofs(document, node, txindex=False)  # the recorded block hashes make -txindex unnecessary
     statuses = sorted(u["status"] for p in report["proofs"] for u in p["utxos"])
     assert report["result"] == "incomplete" and report["summary"]["contradictions"] == 0

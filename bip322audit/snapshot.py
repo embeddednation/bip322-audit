@@ -4,8 +4,12 @@ Sources for the coins:
 
 * ``listunspent`` on a Core wallet that holds the descriptor (``-rpcwallet=``);
   fast, and its ``desc`` field tells us branch and index of every address.
+  What that wallet has spent since the stamp block is listed too, found as
+  ``finalize`` finds the spends (``listsinceblock``), so the stamp block may
+  lie weeks back: the year-end snapshot is taken whenever the year is over.
 * ``scantxoutset`` with the wallet's descriptors; no Core wallet needed, scans
-  the whole UTXO set (a minute or two on mainnet).
+  the whole UTXO set (a minute or two on mainnet).  It sees the UTXO set as
+  it is now: a coin spent since the stamp block is not in it.
 
 Only outputs confirmed at or before the stamp block are included, so the
 snapshot means "the wallet's coins as of block N".
@@ -26,7 +30,7 @@ from bip322core.wallet import DerivedAddress, Wallet, WalletError
 
 from . import TOOL
 from .rpc import BitcoinCli, RpcError, btc, network_of, to_sat
-from .stamp import DEFAULT_DEPTH, Stamp, compose_message, fetch_stamp, iso_utc
+from .stamp import DEFAULT_DEPTH, Stamp, choose_stamp, compose_message, iso_utc
 
 __all__ = [
     "DEFAULT_DEPTH",
@@ -136,14 +140,24 @@ def _memo_locate(wallet: Wallet, max_index: int):
 
 
 def coins_from_listunspent(
-    cli: BitcoinCli, wallet: Wallet, stamp: Stamp, tip_height: int, *, max_index: int = 1000, left_out: dict | None = None
+    cli: BitcoinCli,
+    wallet: Wallet,
+    stamp: Stamp,
+    tip_height: int,
+    *,
+    max_index: int = 1000,
+    left_out: dict | None = None,
+    spent_since: dict | None = None,
 ) -> list[AddressCoins]:
     """Wallet coins confirmed at the stamp block, via the Core wallet selected with ``-rpcwallet``.
 
-    Heights are counted back from ``tip_height``, so the caller must make sure the tip did not move
-    meanwhile (:func:`take_snapshot` does).  ``left_out`` counts the node wallet's outputs that are
-    not this descriptor's: ``{"outputs": n, "amount_sat": s}``.  Within one call an address is derived
-    once and a block's hash is asked for once.
+    What ``listunspent`` lists is unspent now; the coins the wallet has spent since the stamp block
+    come from its own history (:func:`_spent_since`), so that the list is the wallet's coins *at the
+    stamp block*, however long ago that was.  Heights are counted back from ``tip_height``, so the
+    caller must make sure the tip did not move meanwhile (:func:`take_snapshot` does).  ``left_out``
+    counts the node wallet's outputs that are not this descriptor's, ``spent_since`` the listed coins
+    spent after the stamp: each ``{"outputs": n, "amount_sat": s}``.  Within one call an address is
+    derived once and a block's hash is asked for once.
     """
     minconf = tip_height - stamp.height + 1
     entries = cli.call("listunspent", minconf, 9999999)
@@ -161,7 +175,61 @@ def coins_from_listunspent(
         by_address.setdefault(address, AddressCoins(derived)).utxos.append(
             Utxo(e["txid"], int(e["vout"]), to_sat(e["amount"]), height, block_hash(height))
         )
+    listed = {(u.txid, u.vout) for c in by_address.values() for u in c.utxos}
+    for derived, utxo in _spent_since(cli, stamp, locate, left_out):
+        if (utxo.txid, utxo.vout) in listed:
+            continue  # spent between the two reads: listunspent had it
+        by_address.setdefault(derived.address, AddressCoins(derived)).utxos.append(utxo)
+        if spent_since is not None:
+            spent_since["outputs"] = spent_since.get("outputs", 0) + 1
+            spent_since["amount_sat"] = spent_since.get("amount_sat", 0) + utxo.amount_sat
     return _sorted(by_address)
+
+
+def _spent_since(cli: BitcoinCli, stamp: Stamp, locate, left_out: dict | None) -> list[tuple[DerivedAddress, Utxo]]:
+    """The wallet's coins confirmed at the stamp block and spent after it, from the node wallet's own history.
+
+    The transactions the wallet saw since the stamp block (``listsinceblock``, as ``finalize`` reads
+    them) are the ones that can have spent such a coin: every input of theirs that is an output of a
+    wallet transaction confirmed at or before the stamp is one.  A spend not yet confirmed counts too:
+    the coin was there at the stamp.  A conflicted or abandoned transaction spends nothing.  An input
+    the node wallet does not know is not the wallet's; one of another descriptor's goes to ``left_out``.
+    """
+    since = cli.call("listsinceblock", stamp.hash).get("transactions", [])
+    live = [e for e in since if int(e.get("confirmations", 0)) >= 0 and not e.get("abandoned")]
+    later = {e["txid"] for e in live}  # confirmed after the stamp block, or not yet: what they created was not there at the stamp
+    spenders = list(dict.fromkeys(e["txid"] for e in live if e.get("category") == "send"))
+    fetched = cache(lambda txid: _wallet_tx(cli, txid))
+    found: list[tuple[DerivedAddress, Utxo]] = []
+    seen: set[tuple[str, int]] = set()
+    for txid in spenders:
+        tx = fetched(txid)
+        for vin in (tx or {}).get("decoded", {}).get("vin", []):
+            prev_txid, vout = vin.get("txid"), vin.get("vout")
+            if prev_txid is None or prev_txid in later or (prev_txid, vout) in seen:
+                continue
+            seen.add((prev_txid, vout))
+            prev = fetched(prev_txid)
+            if prev is None or prev.get("blockheight") is None or int(prev["blockheight"]) > stamp.height:
+                continue
+            out = next((o for o in prev.get("decoded", {}).get("vout", []) if int(o.get("n", -1)) == int(vout)), None)
+            address = ((out or {}).get("scriptPubKey") or {}).get("address")
+            if not address:
+                continue
+            derived = locate(address, None)
+            if derived is None:
+                _left(left_out, out["value"])
+                continue
+            found.append((derived, Utxo(prev_txid, int(vout), to_sat(out["value"]), int(prev["blockheight"]), prev.get("blockhash"))))
+    return found
+
+
+def _wallet_tx(cli: BitcoinCli, txid: str) -> dict | None:
+    """``gettransaction`` with the transaction decoded; None when the node wallet does not know it (then no input of it is ours)."""
+    try:
+        return cli.call("gettransaction", txid, True, True)
+    except RpcError:
+        return None
 
 
 def coins_from_scantxoutset(
@@ -286,6 +354,7 @@ class Snapshot:
     node_wallet: str | None = None  # the node wallet the coins came from; finalize asks it for the spend history
     skipped_proven: int = 0  # outputs left out because an earlier snapshot proves their address (--skip-proven)
     left_out: dict = field(default_factory=dict)  # why -> {"outputs": n, "amount_sat": s}, for everything seen and not listed
+    spent_since: dict = field(default_factory=dict)  # {"outputs": n, "amount_sat": s}: listed coins the wallet has spent since the stamp
 
     @property
     def total_sat(self) -> int:
@@ -304,6 +373,7 @@ class Snapshot:
             "node_wallet": self.node_wallet,
             "skipped_proven": self.skipped_proven,
             "left_out": self.left_out,
+            "spent_since": self.spent_since,
             "addresses": self.addresses,
             "total_sat": self.total_sat,
             "total_btc": btc(self.total_sat),
@@ -315,7 +385,9 @@ def take_snapshot(
     wallet: Wallet,
     template: str,
     *,
-    depth: int = DEFAULT_DEPTH,
+    at: str | int | None = None,
+    before=None,
+    depth: int | None = None,
     source: str = "auto",
     strict_message: bool = True,
     max_index: int = 1000,
@@ -326,6 +398,11 @@ def take_snapshot(
 ) -> tuple[Snapshot, dict[str, object]]:
     """Build the snapshot and the unsigned PSBTs; returns (snapshot, {address: BIP322PSBT}).
 
+    The stamp block is chosen one way (:func:`bip322audit.stamp.choose_stamp`):
+    ``at`` a height or hash, ``before`` an instant (a ``datetime``; its last
+    block), ``depth`` blocks behind the tip; none of them, the last block
+    before today 00:00 UTC.  The coins are the wallet's at that block: what is
+    unspent now and, from the node wallet's history, what it has spent since.
     ``progress`` is an optional callable given a line of text before slow steps.
     ``skip_addresses`` leaves out addresses that earlier snapshots already prove
     (see :func:`bip322audit.proofs.proven_addresses`).  ``addresses`` proves
@@ -346,9 +423,20 @@ def take_snapshot(
     wallet = _wallet_on_chain(wallet, chain)
     policy = f"{wallet.threshold} of {len(wallet.cosigners)}"
     source, node_wallet = _choose_source(cli, source, progress)
-    tip_height, stamp, message, coins, foreign = _read_under_one_tip(
-        cli, wallet, template, source, depth=depth, strict_message=strict_message, max_index=max_index, progress=progress
+    tip_height, stamp, message, coins, foreign, spent = _read_under_one_tip(
+        cli,
+        wallet,
+        template,
+        source,
+        at=at,
+        before=before,
+        depth=depth,
+        strict_message=strict_message,
+        max_index=max_index,
+        progress=progress,
     )
+    if source == "scantxoutset" and stamp.height < tip_height and progress:
+        progress(f"scantxoutset sees the UTXO set now: a coin spent since block {stamp.height} is not listed; the node wallet's history is")
     # recorded in snapshot.json and shown by the command: what the node listed and the snapshot does not, and why
     why = f"the node lists them but this descriptor does not derive them (another descriptor of the node wallet, or an index beyond {max_index})"
     left_out = {"other_descriptors": {**foreign, "amount_btc": btc(foreign["amount_sat"]), "why": why}}
@@ -376,6 +464,7 @@ def take_snapshot(
         node_wallet=node_wallet,
         skipped_proven=skipped,
         left_out=left_out,
+        spent_since={**spent, "amount_btc": btc(spent["amount_sat"])},
     )
     return snapshot, psbts
 
@@ -414,25 +503,37 @@ def _choose_source(cli: BitcoinCli, source: str, progress) -> tuple[str, str | N
 
 
 def _read_under_one_tip(
-    cli: BitcoinCli, wallet: Wallet, template: str, source: str, *, depth: int, strict_message: bool, max_index: int, progress
-) -> tuple[int, Stamp, str, list[AddressCoins], dict]:
-    """Tip height, stamp, message, coins and the count of foreign outputs, all as of one tip: read again if a block arrives meanwhile."""
+    cli: BitcoinCli,
+    wallet: Wallet,
+    template: str,
+    source: str,
+    *,
+    at,
+    before,
+    depth,
+    strict_message: bool,
+    max_index: int,
+    progress,
+) -> tuple[int, Stamp, str, list[AddressCoins], dict, dict]:
+    """Tip height, stamp, message, coins, the count of foreign outputs and of coins spent since the stamp, all as of one tip: read
+    again if a block arrives meanwhile."""
     for _ in range(TIP_RETRIES):
         tip_height, tip_hash = cli.tip()
-        stamp = fetch_stamp(cli, depth, tip_height=tip_height)
+        stamp = choose_stamp(cli, at=at, before=before, depth=depth, tip_height=tip_height)
         message = compose_message(template, stamp)
         lint = lint_message(message.encode("utf-8"))
         if lint and strict_message:
             raise ValueError("a hardware signer may refuse this message: " + "; ".join(lint))
         foreign: dict = {"outputs": 0, "amount_sat": 0}
+        spent: dict = {"outputs": 0, "amount_sat": 0}
         if source == "listunspent":
-            coins = coins_from_listunspent(cli, wallet, stamp, tip_height, max_index=max_index, left_out=foreign)
+            coins = coins_from_listunspent(cli, wallet, stamp, tip_height, max_index=max_index, left_out=foreign, spent_since=spent)
         else:
             if progress:
                 progress("scantxoutset: scanning the whole UTXO set for the wallet descriptor, this takes minutes on mainnet")
             coins = coins_from_scantxoutset(cli, wallet, stamp, scan_range=max_index, left_out=foreign)
         if cli.tip() == (tip_height, tip_hash):
-            return tip_height, stamp, message, coins, foreign  # nothing arrived in between: all of it belongs to this tip
+            return tip_height, stamp, message, coins, foreign, spent  # nothing arrived in between: all of it belongs to this tip
         if progress:
             progress("the tip moved while the coins were being read; reading them again so that everything belongs to one tip")
     raise RpcError(f"the node's tip kept moving while the coins were being read ({TIP_RETRIES} attempts); try again")

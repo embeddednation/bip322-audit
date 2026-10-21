@@ -61,7 +61,7 @@ from .snapshot import (
     write_snapshot,
     write_text_atomic,
 )
-from .stamp import fetch_stamp
+from .stamp import choose_stamp, parse_when
 
 DEFAULT_TEMPLATE = "Proof of control {date}"
 EXIT_HELP = "Exit codes: 0 done, 2 could not run (bad input, a file or the node not reachable)."
@@ -177,8 +177,18 @@ def cmd_init(args) -> int:
     return 0
 
 
+def _block_choice(args) -> dict:
+    """How the stamp block was chosen (``--at``, ``--before``, ``--depth``), as :func:`take_snapshot` and :func:`choose_stamp` take it.
+
+    ``--depth`` has a default on ``prove``, so it yields to ``--at`` or ``--before`` when one of those is given.
+    """
+    if args.at is not None or args.before is not None:
+        return {"at": args.at, "before": parse_when(args.before) if args.before is not None else None, "depth": None}
+    return {"at": None, "before": None, "depth": args.depth}
+
+
 def cmd_stamp(args) -> int:
-    print(fetch_stamp(_cli(args, Config.load()), args.depth).line())
+    print(choose_stamp(_cli(args, Config.load()), **_block_choice(args)).line())
     return 0
 
 
@@ -208,7 +218,7 @@ def _new_snapshot(args, *, source: str, addresses: list[str] | None, skip_proven
         cli,
         wallet,
         args.text if args.text is not None else str(config.get("text", name, DEFAULT_TEMPLATE)),
-        depth=args.depth,
+        **_block_choice(args),
         source=source,
         strict_message=not args.allow_any_message,
         max_index=args.max_index,
@@ -237,6 +247,7 @@ def _snapshot_summary(directory: Path, snapshot: Snapshot, notes: list[str]) -> 
         "utxos": sum(len(a["utxos"]) for a in snapshot.addresses),
         "skipped_proven": snapshot.skipped_proven,
         "left_out": snapshot.left_out,
+        "spent_since": snapshot.spent_since,
         "total_sat": snapshot.total_sat,
         "total_btc": btc(snapshot.total_sat),
         "message": snapshot.message,
@@ -405,11 +416,29 @@ def _add_global_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_wallet_and_message_args(p: argparse.ArgumentParser, *, descriptor: str, text: str, depth: str) -> None:
-    """``--descriptor``, ``--text`` and ``--depth``, the same for snapshot and prove; each words the help for its own case."""
+def _add_wallet_and_message_args(p: argparse.ArgumentParser, *, descriptor: str, text: str) -> None:
+    """``--descriptor`` and ``--text``, the same for snapshot and prove; each words the help for its own case."""
     p.add_argument("--descriptor", "-d", metavar="FILE|DESC", help=descriptor)
     p.add_argument("--text", default=None, help=text)
-    p.add_argument("--depth", type=int, default=DEFAULT_DEPTH, help=depth)
+
+
+def _add_block_args(p: argparse.ArgumentParser, *, depth: int | None) -> None:
+    """``--before``, ``--at`` and ``--depth``: which block is the stamp block, one way; the default is ``depth`` behind the tip
+    when one is given (prove), else the last block before today 00:00 UTC, the night before."""
+    g = p.add_mutually_exclusive_group()
+    default = (
+        f"the block {depth} behind the tip"
+        if depth is not None
+        else "the last block before today 00:00 UTC, the night before, which a statement to date closes on"
+    )
+    g.add_argument(
+        "--before",
+        metavar="WHEN",
+        help=f"the last block before WHEN, a date (YYYY-MM-DD, midnight UTC) or an ISO 8601 instant: --before 2027-01-01 is the "
+        f"last block of 2026, which the statement of 2026 closes on (default: {default})",
+    )
+    g.add_argument("--at", metavar="HEIGHT|HASH", help="this very block, as the statement names its closing block")
+    g.add_argument("--depth", type=int, default=depth, metavar="N", help="the block N behind the tip")
 
 
 def _add_psbt_args(p: argparse.ArgumentParser, *, max_index: str) -> None:
@@ -454,24 +483,30 @@ def _add_stamp_parser(sub) -> None:
     p = sub.add_parser(
         "stamp",
         help="print the block stamp line for a message",
-        description="Print `block: HEIGHT HASH TIME` for the block DEPTH blocks behind the node's tip. No wallet is needed.",
+        description=(
+            "Print `block: HEIGHT HASH TIME` for the stamp block: the last block before WHEN (--before), the block --at "
+            "HEIGHT|HASH, or the block --depth N behind the tip; by default the last block before today 00:00 UTC. No wallet is needed."
+        ),
     )
-    p.add_argument("--depth", type=int, default=DEFAULT_DEPTH, help=f"blocks behind the tip (default {DEFAULT_DEPTH})")
+    _add_block_args(p, depth=None)
     _add_node_args(p)
-    p.set_defaults(func=cmd_stamp, examples=["stamp", "--cli 'bitcoin-cli -signet' stamp --depth 3"])
+    p.set_defaults(func=cmd_stamp, examples=["stamp", "stamp --before 2027-01-01", "--cli 'bitcoin-cli -signet' stamp --depth 3"])
 
 
 def _add_snapshot_parser(sub) -> None:
     p = sub.add_parser(
         "snapshot",
-        help="stamp, funded addresses, message and one PSBT per address, into the wallet's directory",
+        help="the wallet's coins at a block and one PSBT per funded address, into the wallet's directory",
         description=(
             "Take the snapshot: read the wallet descriptor from the node wallet (or --descriptor), choose the stamp block "
-            "(tip - DEPTH), find the wallet's coins confirmed at that block "
-            "(listunspent on the node wallet, or a scantxoutset of the descriptor), compose the message from the template "
-            "plus the stamp line, and write snapshot.json, message.txt and to_sign/to_sign-NN.psbt per funded address into "
-            "<holder>/<wallet>/<date>-<height>/ in the data directory (the address of each PSBT is in snapshot.json). "
-            "Sign the PSBTs on the cosigners' devices and put the results in its signed/."
+            "(the last block before WHEN with --before, the block --at HEIGHT|HASH, --depth N behind the tip; by default the "
+            "last block before today 00:00 UTC, the night before), find the wallet's coins confirmed at that block (listunspent "
+            "on the node wallet, and from its history the coins spent since; or a scantxoutset of the descriptor, which cannot see "
+            "those), compose the message from the template plus the stamp line, and write snapshot.json, message.txt and "
+            "to_sign/to_sign-NN.psbt per funded address into <holder>/<wallet>/<date>-<height>/ in the data directory, named for "
+            "the stamp block (the address of each PSBT is in snapshot.json). The statement of a period wants, for every closing "
+            "coin, a proof at or after its closing block: --before 2027-01-01 is the snapshot for the statement of 2026, whenever "
+            "it is taken. Sign the PSBTs on the cosigners' devices and put the results in its signed/."
         ),
     )
     _add_node_args(p)
@@ -480,8 +515,8 @@ def _add_snapshot_parser(sub) -> None:
         descriptor="use this descriptor (a file or the text) instead of the node wallet's own; it must be one of the wallet's descriptors",
         text=f"message template; {{date}} {{time}} {{height}} {{hash}} are filled from the stamp block "
         f"(default: text in bip322.toml, else '{DEFAULT_TEMPLATE}')",
-        depth=f"stamp/snapshot block is this many blocks behind the tip (default {DEFAULT_DEPTH})",
     )
+    _add_block_args(p, depth=None)
     p.add_argument(
         "--source",
         choices=["auto", "listunspent", "scantxoutset"],
@@ -498,11 +533,12 @@ def _add_snapshot_parser(sub) -> None:
     p.set_defaults(
         func=cmd_snapshot,
         examples=[
-            "snapshot",
-            "-w treasury snapshot --text 'Annual audit {date}'",
+            "snapshot                                  # the night before: the block a statement to date closes on",
+            "-w treasury snapshot --before 2027-01-01  # the last block of 2026: the snapshot for the statement of 2026",
+            "-w treasury snapshot --at 931871 --text 'Annual audit {date}'",
             "--cli 'bitcoin-cli -signet' -w watch snapshot",
             "snapshot -d wallet.desc --source scantxoutset -o audit-2026",
-            "-w treasury snapshot --skip-proven   # only addresses no earlier snapshot proves",
+            "-w treasury snapshot --skip-proven        # only addresses no earlier snapshot proves",
         ],
     )
 
@@ -535,6 +571,7 @@ def _add_prove_parser(sub) -> None:
             "Like snapshot, for exactly the addresses given: a stamp, the message, one PSBT per address, and the coins each holds "
             "at the stamp block if any. For a change address before the spend is broadcast, or a deposit address before the "
             "deposit: the proof shows the wallet controls the address, and later outputs to it are covered by it. "
+            "The stamp block is a recent one, --depth N behind the tip, since the address holds nothing yet. "
             "An address that is not the wallet's (within --max-index) is refused, which is the point of checking before sending."
         ),
     )
@@ -544,8 +581,8 @@ def _add_prove_parser(sub) -> None:
         p,
         descriptor="use this descriptor instead of the node wallet's own",
         text=f"message template (default: text in bip322.toml, else '{DEFAULT_TEMPLATE}')",
-        depth=f"stamp block is this many blocks behind the tip (default {DEFAULT_DEPTH})",
     )
+    _add_block_args(p, depth=DEFAULT_DEPTH)
     _add_psbt_args(p, max_index="derivation range to search per branch (default %(default)s)")
     _add_destination_args(p)
     p.set_defaults(func=cmd_prove, examples=["prove bc1q...", "-w treasury prove bc1q... --text 'Proof of control {date}'"])

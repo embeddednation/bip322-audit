@@ -27,6 +27,7 @@ trap cleanup EXIT
 # no -txindex: verify fetches a spent output's transactions by the block hashes the snapshot records
 step "0. a private regtest node with a wallet"
 "$CORE/bin/bitcoind" -regtest -datadir="$DATADIR" -rpcport=$PORT -rpcuser=demo -rpcpassword=demo -listen=0 -connect=0 -fallbackfee=0.0001 -daemonwait >/dev/null
+$CLI setmocktime $(( $(date +%s) - 86400 )) >/dev/null   # the blocks are dated yesterday: a snapshot taken today, as of the night before, covers them
 $CLI createwallet miner >/dev/null; MINE=$($CLI -rpcwallet=miner getnewaddress); $CLI -rpcwallet=miner generatetoaddress 101 "$MINE" >/dev/null
 echo "node at height $($CLI getblockcount)"
 
@@ -45,13 +46,13 @@ req = [{"desc": json.loads(d)["descriptor"], "timestamp": "now", "range": [0, 50
 print(subprocess.run([*cli, "-rpcwallet=watch", "importdescriptors", json.dumps(req)], capture_output=True, text=True, check=True).stdout.strip())
 PY
 
-step "2. fund two wallet addresses and confirm (7 blocks, so a depth-6 stamp covers them)"
+step "2. fund two wallet addresses and confirm"
 A0=$(.venv/bin/bip322 -w "$WORK/wallet.desc" --network regtest deriveaddresses 0); A1=$(.venv/bin/bip322 -w "$WORK/wallet.desc" --network regtest deriveaddresses 2 --change)
 $CLI -rpcwallet=miner sendtoaddress "$A0" 0.5 >/dev/null; $CLI -rpcwallet=miner sendtoaddress "$A1" 0.1 >/dev/null
 $CLI -rpcwallet=miner generatetoaddress 7 "$MINE" >/dev/null
 $CLI -rpcwallet=watch listunspent 1 | .venv/bin/python -c "import json,sys;[print(u['address'], u['amount'], 'conf', u['confirmations']) for u in json.load(sys.stdin)]"
 
-step "3. snapshot: stamp block, coins as of that block, message, one PSBT per funded address, into \$BIP322_DIR/demo/watch/"
+step "3. snapshot: the wallet's coins at the stamp block (by default the last block before today, the night before; --before 2027-01-01 for a year end), message, one PSBT per funded address, into \$BIP322_DIR/demo/watch/"
 $AUDIT init -w demo/watch          # bip322.toml there: holder = "demo", wallet = "watch", every other key a comment to switch on
 SNAP=$(run $AUDIT --cli "$CLI" -w watch snapshot --text "Annual audit {date}")
 cat "$SNAP/message.txt"; echo; ls "$SNAP"
@@ -92,5 +93,10 @@ RC=0; run $AUDIT --cli "$CLI" verify "$PROOFS" || RC=$?
 step "8. the owner re-runs finalize: the proofs file now records the spend, and the auditor sees the coin was unspent at the snapshot"
 run $AUDIT --cli "$CLI" -w watch finalize
 run $AUDIT --cli "$CLI" verify "$PROOFS"
+
+step "9. a snapshot taken now at that same block lists the spent coin too, from the wallet's history: a year-end snapshot is taken whenever the year is over"
+H=$(.venv/bin/python -c "import json,sys;print(json.load(open(sys.argv[1]))['stamp']['height'])" "$SNAP/snapshot.json")
+run $AUDIT --cli "$CLI" -w watch snapshot --at "$H" -o "$WORK/again" 2>"$WORK/again.log" >/dev/null
+grep -A2 '"spent_since"' "$WORK/again.log"
 
 step "done - artifacts in $WORK"

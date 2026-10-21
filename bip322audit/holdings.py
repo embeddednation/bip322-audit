@@ -17,7 +17,7 @@ from embit.script import Script
 
 from . import TOOL
 from .rpc import BitcoinCli, RpcError, btc, network_of, to_sat
-from .stamp import iso_utc
+from .stamp import Stamp, header_at, iso_utc
 
 __all__ = ["format_holdings", "holdings", "holdings_command", "is_outpoint", "resolve_block"]
 
@@ -36,13 +36,8 @@ def _normalised(target: str) -> str:
 
 
 def resolve_block(cli: BitcoinCli, at: str | int) -> dict:
-    """A block by height or hash: ``{height, hash, time}``."""
-    text = str(at).strip()
-    block_hash = cli.block_hash(int(text)) if text.isdigit() else text
-    header = cli.block_header(block_hash)
-    if int(header.get("confirmations", 0)) <= 0:
-        raise RpcError(f"block {block_hash} is not in the main chain")
-    return {"height": int(header["height"]), "hash": header.get("hash", block_hash), "time": iso_utc(header["time"])}
+    """A block by height or hash, in the main chain: ``{height, hash, time}``, the time in ISO 8601 as every file writes it."""
+    return Stamp.from_header(header_at(cli, at)).to_dict()
 
 
 def holdings(cli: BitcoinCli, targets: list[str], *, at: str | int | None = None) -> dict:

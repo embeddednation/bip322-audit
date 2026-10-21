@@ -50,21 +50,22 @@ The whole yearly flow across the three packages is in bip322-report's [handbook]
 
 ## Workflow
 
-For "we controlled these coins as of block N", repeatable whenever coins move:
+For "we controlled these coins as of block N", where N is the block a
+statement closes on, whenever the year is over:
 
 ```sh
 bip322 init -w treasury               # once: this directory holds the wallets (bip322.toml)
-bip322 audit snapshot                 # the node wallet's own descriptor
-#   -> company/treasury/2026-09-14-912345/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
+bip322 audit snapshot --before 2027-01-01   # the wallet's coins at the last block of 2026, the node wallet's own descriptor
+#   -> company/treasury/2026-12-31-931871/: snapshot.json, message.txt, to_sign/to_sign-01.psbt ... one per funded address
 #   sign every PSBT on the cosigners' devices, put the results into its signed/
 bip322 audit checksigners             # new devices: every cosigner's signature alone, every threshold combination
-bip322 audit finalize                 # the newest snapshot -> treasury-2026-09-14-912345-proofs.json (hand this to the auditor)
+bip322 audit finalize                 # the newest snapshot -> treasury-2026-12-31-931871-proofs.json (hand this to the auditor)
 bip322 audit verify --report audit-report.json
 ```
 
 The wallet is `-w NAME`, else the wallet directory the command runs in, else
 `wallet` in `bip322.toml`, else the node's one loaded wallet; `checksigners`, `finalize` and `verify` take a snapshot's name
-(`finalize 2026-09-14-912345`) or a path when the newest is not the one
+(`finalize 2026-12-31-931871`) or a path when the newest is not the one
 meant, and `verify` a proofs file. `-o DIR` writes a snapshot elsewhere.
 See [Where everything lives](#where-everything-lives).
 
@@ -85,24 +86,33 @@ the node. Chains: `main`, `test`, `testnet4`, `signet`, `regtest`.
 
 `snapshot` reads the wallet's descriptor from the node wallet
 (`listdescriptors`; `--descriptor FILE` overrides and is cross-checked against
-the node), takes the block six behind the tip (`--depth`) as the stamp *and*
-the snapshot height: the message ends with `block: HEIGHT HASH TIME` taken
-from that block, and only outputs confirmed at that block are listed. Coins
-come from `listunspent` on the node wallet or, when the node has no wallet, from a
-`scantxoutset` of the descriptor (minutes on mainnet; the command says so
-before it starts; `--source` forces either). The stamp, the coins, their
-heights and block hashes are read under one tip: if a block arrives
-meanwhile, they are read again. The template accepts `{date}`, `{time}`,
+the node) and takes one block as the stamp *and* the snapshot block: the last
+block before an instant (`--before 2027-01-01` is the last block of 2026, the
+block the statement of 2026 closes on), the block `--at HEIGHT|HASH`, or the
+block `--depth N` behind the tip; by default the last block before today
+00:00 UTC, the night before, which a statement to date closes on. The message
+ends with `block: HEIGHT HASH TIME` taken from that block, and the outputs
+listed are the wallet's at that block: those unspent now (`listunspent` on
+the node wallet) and, from the node wallet's own history, those it has spent
+since (`listsinceblock` from the stamp block, as `finalize` finds the
+spends), so the year-end snapshot is taken whenever the year is over, not in
+a hurry before anything moves. When the node has no wallet, a `scantxoutset`
+of the descriptor lists what is unspent now (minutes on mainnet; the command
+says so before it starts, and that a coin spent since the block is not in
+it; `--source` forces either). The stamp, the coins, their heights and block
+hashes are read under one tip: if a block arrives meanwhile, they are read
+again. The template accepts `{date}`, `{time}`,
 `{height}`, `{hash}` (date and time are the stamp block's header time, UTC;
 `text` in `bip322.toml` sets the default); anything else in braces is refused, as is a template with a `block:` line of
 its own, and the message is checked against hardware signers' message rules.
 
 `snapshot` covers one descriptor (`wsh(multi/sortedmulti)` or `wpkh`). Its
-summary and `snapshot.json` say which (`descriptor`), and under `left_out`
+summary and `snapshot.json` say which (`descriptor`), under `left_out`
 how many outputs and how much the node listed that the snapshot does not, and
 why: coins of another descriptor in the same node wallet, coins on addresses
-an earlier snapshot proves. Descriptors of a kind it does not cover are named
-in `notes`. The snapshot's directory is `<date>-<height>` in the wallet's
+an earlier snapshot proves; and under `spent_since` how many of the listed
+coins the wallet has spent since the stamp block. Descriptors of a kind it
+does not cover are named in `notes`. The snapshot's directory is `<date>-<height>` in the wallet's
 directory, with `-2`, `-3` ... when that exists; `-o DIR --force` rewrites
 a snapshot that holds no signed PSBTs and no proofs file yet, and nothing else.
 

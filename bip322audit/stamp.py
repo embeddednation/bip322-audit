@@ -4,6 +4,14 @@ The hash makes the message impossible to have written before that block
 existed (a *not before* bound); the height and the block's own header time
 make it readable and checkable with one ``getblockheader`` call.  All three
 come from the block, so the stamp is verifiable as a whole.
+
+Which block: the one a holder names (:func:`header_at`), the last block
+before an instant (:func:`header_before`: ``--before 2027-01-01`` is the
+last block of 2026, the block a statement of 2026 closes on), or a block
+behind the tip (:func:`fetch_stamp`).  Given none, :func:`choose_stamp`
+takes the last block before today 00:00 UTC, the night before: a statement
+to date closes on the same block, so a snapshot and a statement taken on
+the same day agree without a word.
 """
 
 from __future__ import annotations
@@ -14,7 +22,22 @@ from datetime import UTC, datetime
 
 from .rpc import BitcoinCli, RpcError
 
-__all__ = ["DEFAULT_DEPTH", "PLACEHOLDERS", "STAMP_RE", "Stamp", "check_stamp", "compose_message", "fetch_stamp", "iso_utc", "parse_stamp"]
+__all__ = [
+    "DEFAULT_DEPTH",
+    "PLACEHOLDERS",
+    "STAMP_RE",
+    "Stamp",
+    "check_stamp",
+    "choose_stamp",
+    "compose_message",
+    "fetch_stamp",
+    "header_at",
+    "header_before",
+    "iso_utc",
+    "parse_stamp",
+    "parse_when",
+    "start_of_today",
+]
 
 # [0-9], not \d: \d also matches the digits of other scripts, which int() would then read as a height
 STAMP_RE = re.compile(r"^block: ([0-9]+) ([0-9a-f]{64}) ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$", re.M)
@@ -51,9 +74,69 @@ class Stamp:
     def from_dict(cls, d: dict) -> Stamp:
         return cls(int(d["height"]), str(d["hash"]), str(d["time"]))
 
+    @classmethod
+    def from_header(cls, header: dict) -> Stamp:
+        """From a block as :func:`header_at` and :func:`header_before` give it: height, hash and the header time in seconds."""
+        return cls(int(header["height"]), str(header["hash"]), iso_utc(header["time"]))
+
+
+def parse_when(text: str) -> datetime:
+    """``YYYY-MM-DD`` (midnight UTC) or an ISO 8601 instant; a time without a zone is UTC."""
+    text = text.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    when = datetime.fromisoformat(text)
+    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+
+
+def start_of_today() -> datetime:
+    """Today 00:00 UTC: the instant the night before ended, which the default stamp and a statement to date lie before."""
+    return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _header(cli: BitcoinCli, height: int, block_hash: str | None = None) -> dict:
+    """A block as the choosers hand it on: ``{"height", "hash", "time"}``, the time in seconds as the header carries it."""
+    block_hash = block_hash or cli.block_hash(height)
+    header = cli.block_header(block_hash)
+    return {"height": int(header["height"]), "hash": block_hash, "time": int(header["time"])}
+
+
+def header_at(cli: BitcoinCli, at: str | int) -> dict:
+    """The block named by height or hash, which must be in the main chain."""
+    text = str(at).strip()
+    block_hash = cli.block_hash(int(text)) if text.isdigit() else text
+    header = cli.block_header(block_hash)
+    if int(header.get("confirmations", 0)) <= 0:
+        raise RpcError(f"block {block_hash} is not in the main chain")
+    return {"height": int(header["height"]), "hash": block_hash, "time": int(header["time"])}
+
+
+def header_before(cli: BitcoinCli, when: datetime, *, tip_height: int | None = None) -> dict:
+    """The last block before ``when``: the highest block whose header time is before it, found by a binary search over the
+    headers; the chain's first block when even that is not before it, the tip when ``when`` lies ahead of the chain.
+
+    Header times need not rise with the height, so this is the natural boundary rather than a unique one; the height is what
+    makes it definite, and every file names it.  ``tip_height``: search no higher than this, the tip the caller read, so that
+    the stamp and whatever else is derived from that tip belong together.
+    """
+    ts = int(when.timestamp())
+    if tip_height is None:
+        tip_height, _ = cli.tip()
+    first = _header(cli, 0)
+    if first["time"] >= ts:
+        return first
+    lo, hi = 0, tip_height
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _header(cli, mid)["time"] < ts:
+            lo = mid
+        else:
+            hi = mid - 1
+    return _header(cli, lo)
+
 
 def fetch_stamp(cli: BitcoinCli, depth: int = DEFAULT_DEPTH, *, tip_height: int | None = None) -> Stamp:
-    """The block ``depth`` blocks behind the tip (default 6: safe from reorgs, an hour of slack).
+    """The block ``depth`` blocks behind the tip (6: safe from reorgs, an hour of slack; what ``prove`` takes).
 
     ``tip_height``: the tip the caller already read, so that the stamp and whatever else is derived from it share one tip.
     """
@@ -64,9 +147,30 @@ def fetch_stamp(cli: BitcoinCli, depth: int = DEFAULT_DEPTH, *, tip_height: int 
     height = tip_height - depth
     if height < 0:
         raise ValueError(f"chain has only {tip_height + 1} blocks; depth {depth} is too large")
-    block_hash = cli.block_hash(height)
-    header = cli.block_header(block_hash)
-    return Stamp(height=int(header["height"]), hash=block_hash, time=iso_utc(header["time"]))
+    return Stamp.from_header(_header(cli, height))
+
+
+def choose_stamp(
+    cli: BitcoinCli,
+    *,
+    at: str | int | None = None,
+    before: datetime | None = None,
+    depth: int | None = None,
+    tip_height: int | None = None,
+) -> Stamp:
+    """The stamp block, chosen one way: ``at`` a height or hash, ``before`` an instant (its last block), ``depth`` blocks
+    behind the tip; none of them, the last block before today 00:00 UTC, the night before.
+
+    ``tip_height`` as for :func:`fetch_stamp`; a block above it (one that arrived since the caller read the tip) is refused.
+    """
+    if sum(x is not None for x in (at, before, depth)) > 1:
+        raise ValueError("choose the stamp block one way: at, before or depth")
+    if depth is not None:
+        return fetch_stamp(cli, depth, tip_height=tip_height)
+    header = header_at(cli, at) if at is not None else header_before(cli, before or start_of_today(), tip_height=tip_height)
+    if tip_height is not None and header["height"] > tip_height:
+        raise RpcError(f"block {header['height']} is above the tip ({tip_height}) this snapshot is read at; try again")
+    return Stamp.from_header(header)
 
 
 def parse_stamp(message: bytes | str) -> Stamp | None:

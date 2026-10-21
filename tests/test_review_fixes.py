@@ -195,7 +195,7 @@ def test_snapshot_retries_when_the_tip_moves(wallet):
     for source in ("listunspent", "scantxoutset"):
         node = MovingTip(wallet, coins, tip=1000, on=source, rpcwallet=source == "listunspent")
         lines = []
-        snapshot, _ = take_snapshot(node, wallet, "x", max_index=20, progress=lines.append)
+        snapshot, _ = take_snapshot(node, wallet, "x", depth=6, max_index=20, progress=lines.append)
         assert node.moved and snapshot.tip_height == 1001 and snapshot.stamp.height == 995 and any("tip moved" in x for x in lines)
         listed = sorted((u["height"], u["blockhash"]) for a in snapshot.addresses for u in a["utxos"])
         assert listed == [(980, fake_hash(980)), (990, fake_hash(990))]  # true heights; the output at 996 is after the stamp
@@ -208,7 +208,7 @@ def test_snapshot_retries_when_the_tip_moves(wallet):
             return super().call(method, *params)
 
     with pytest.raises(RpcError, match="tip kept moving"):
-        take_snapshot(Restless(wallet, coins), wallet, "x", max_index=20)
+        take_snapshot(Restless(wallet, coins), wallet, "x", depth=6, max_index=20)
 
 
 def test_finalize_with_node_wallet_named_empty_string(bundle, tmp_path, wallet, funded, signer_expressions, monkeypatch, capsys):
@@ -330,7 +330,7 @@ def test_bundle_names_do_not_collide_and_force_is_limited(tmp_path, wallet, fund
     monkeypatch.chdir(tmp_path)
     assert audit_cli.main(["-w", "watch", "snapshot", "--max-index", "20"]) == 0
     first = Path(capsys.readouterr().out.strip())
-    assert audit_cli.main(["-w", "watch", "prove", "--max-index", "20", wallet.derive(0).address]) == 0
+    assert audit_cli.main(["-w", "watch", "prove", "--max-index", "20", "--at", "1000", wallet.derive(0).address]) == 0  # the same block
     second = Path(capsys.readouterr().out.strip())
     assert first != second and second.name == first.name + "-2" and len(list((second / "to_sign").iterdir())) == 1
     # --force rewrites an unsigned bundle and drops the PSBTs of the earlier run

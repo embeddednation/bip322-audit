@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.23.0 (2026-10-21)
+
+The stamp block is chosen, and it is the block the coins are listed at.
+`snapshot`, `prove` and `stamp` take `--before WHEN` (the last block before
+a date or instant: `--before 2027-01-01` is the last block of 2026, the block
+the statement of 2026 closes on), `--at HEIGHT|HASH`, or `--depth N` behind
+the tip as before; `snapshot` and `stamp` default to the last block before
+today 00:00 UTC, the night before, which a statement to date closes on, and
+`prove` keeps six behind the tip. The snapshot lists the wallet's coins at
+that block: what `listunspent` has, and from the node wallet's own history
+what the wallet has spent since (`listsinceblock` from the stamp block, as
+`finalize` finds the spends), so the year-end snapshot can be taken whenever
+the year is over; `snapshot.json` and the summary count those under
+`spent_since`. A `scantxoutset` cannot see them, and the command says so.
+The snapshot's directory is named for the stamp block as before, so the
+year-end snapshot reads `2026-12-31-931871`. `take_snapshot` takes `at`,
+`before` and `depth` (none: the night before); `stamp` gains `parse_when`,
+`header_at`, `header_before`, `choose_stamp`, `start_of_today` and
+`Stamp.from_header`, and `holdings.resolve_block` is built on them.
+
 ## 0.22.1 (2026-10-20)
 
 The sample `bip322.toml` shows `text` under `[wallets.NAME]` where it showed

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.0 (2026-10-22)
+
+An account's directory is marked by `movements.json`, its own record of
+its deposits and withdrawals as bip322-report reads it, where 0.24 said
+`ledger.json`: a ledger is the book of accounts, not one account's record,
+and the word names a signing-device vendor besides. `ACCOUNT_FILE` replaces
+`LEDGER_FILE`.
+
 ## 0.24.0 (2026-10-22)
 
 The tree is the declaration. A directory under a holder is a wallet from the

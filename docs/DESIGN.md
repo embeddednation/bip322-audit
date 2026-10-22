@@ -60,7 +60,7 @@ credentials are what is trusted and the tool holds none. The commands are
   tree is the declaration: a directory under a holder is a wallet from the moment
   it exists, so a statement knows its wallets before any proof is taken and can
   ask for the snapshots it lacks; an account's directory is marked by its
-  `ledger.json`. The signed message is the holder's name and the stamp's date,
+  `movements.json`. The signed message is the holder's name and the stamp's date,
   the name the statement's header carries, so what is signed and what is stated
   cannot drift apart.
   A directory is named for its place (the tree supplies wallet and kind); a

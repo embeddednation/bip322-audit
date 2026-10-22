@@ -11,14 +11,14 @@ it, and a command run in it or anywhere below finds it, as git finds its reposit
       <holder>/<wallet>/<date>-<height>/    one round of proofs: snapshot.json, message.txt, to_sign/, signed/,
                                             and once finalized <wallet>-<date>-<height>-proofs.json
       <holder>/<wallet>/history.json        the wallet's history as bip322-report last read it from the node
-      <holder>/<account>/ledger.json        a custodial account's own record of its deposits and withdrawals (bip322-report)
+      <holder>/<account>/movements.json     a custodial account's own record of its deposits and withdrawals (bip322-report)
 
 The tree is the declaration: a top-level directory is a holder, and a
 directory under it is one of the holder's wallets, from the moment it exists
 (``bip322 init -w KEY/NAME`` makes the first, ``mkdir`` makes another), so a
 statement knows its wallets before any proof is taken.  Two kinds of
 directory under a holder are not wallets: ``statements/``, and an account,
-marked by its ``ledger.json``.  A wallet's directory holds its snapshots and
+marked by its ``movements.json``.  A wallet's directory holds its snapshots and
 its history, nothing else.  A directory is named for its place: the tree
 supplies the holder, the wallet and the kind, so the names stay bare.  A
 wallet's name is unique in the tree, so ``-w NAME`` finds it under whichever
@@ -62,8 +62,8 @@ import tomllib
 from pathlib import Path
 
 __all__ = [
+    "ACCOUNT_FILE",
     "HISTORY_FILE",
-    "LEDGER_FILE",
     "STALE_KEYS",
     "Config",
     "ConfigError",
@@ -96,7 +96,7 @@ _TABLES = ("holders", "wallets", "addresses")  # the tables of bip322.toml: not 
 RESERVED = ("snapshots", "statements")  # statements/ is the holder's, snapshots/ was the wallet's: no wallet or holder takes them
 HISTORY_FILE = "history.json"  # in a wallet's directory: its history as bip322-report last read it from the node
 SNAPSHOT_FILE = "snapshot.json"  # in a snapshot's directory: what marks one
-LEDGER_FILE = "ledger.json"  # in an account's directory: what marks one (a custodial account's record, read by bip322-report)
+ACCOUNT_FILE = "movements.json"  # in an account's directory: what marks one (its own record of its movements, read by bip322-report)
 STALE_KEYS = {
     "wallet": "the wallet is -w NAME, the directory the command runs in, or the tree's one",
     "text": "the message is the holder's name and the date (--text for another)",
@@ -286,10 +286,10 @@ def _is_snapshot_dir(path: Path) -> bool:
 
 
 def _is_wallet_dir(path: Path) -> bool:
-    """A wallet's directory: any directory under a holder that is not reserved (``statements/``) and not an account (``ledger.json``)."""
+    """A wallet's directory: any directory under a holder that is not reserved (``statements/``) and not an account (``movements.json``)."""
     if not path.is_dir() or path.name.startswith(".") or path.name in RESERVED:
         return False
-    return not (path / LEDGER_FILE).is_file()
+    return not (path / ACCOUNT_FILE).is_file()
 
 
 def _check_layout(path: Path) -> None:
@@ -388,7 +388,7 @@ def holder_dir(key: str) -> Path:
 
 
 def holder_statements_dir(key: str) -> Path:
-    """``<dir>/<holder>/statements``: the holder's ledgers (bip322-report)."""
+    """``<dir>/<holder>/statements``: the holder's statements (bip322-report)."""
     return holder_dir(key) / "statements"
 
 

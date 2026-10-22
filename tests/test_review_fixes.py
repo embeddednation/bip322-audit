@@ -669,7 +669,7 @@ def test_holders_above_wallets(tmp_path, monkeypatch):
     (tmp_path / "jonas" / "personal" / "history.json").write_text("{}")  # a history alone marks a wallet too
     (tmp_path / "notes").mkdir()  # a directory holding no directory declares nothing: not a holder
     (tmp_path / "company" / "exchange").mkdir()
-    (tmp_path / "company" / "exchange" / "ledger.json").write_text("{}")  # an account, not a wallet
+    (tmp_path / "company" / "exchange" / "movements.json").write_text("{}")  # an account, not a wallet
     (tmp_path / "company" / "treasury" / "statements" / "2025").mkdir(parents=True)  # the wallet's statements of earlier versions: not read
     assert holders() == ["company", "jonas"] and wallets() == ["personal", "treasury"]
     assert wallet_dirs() == {"personal": tmp_path / "jonas" / "personal", "treasury": tmp_path / "company" / "treasury"}
@@ -796,7 +796,7 @@ def test_the_holders_name_is_the_message(tmp_path, wallet, funded, monkeypatch, 
     assert audit_cli.main(["snapshot"]) == 0  # two wallets now: the node's one loaded wallet, watch, names the directory
     assert Path(capsys.readouterr().out.strip()).parent == root / "h" / "watch"
     (root / "h" / "exchange").mkdir()
-    (root / "h" / "exchange" / "ledger.json").write_text("{}")  # an account, not a wallet
+    (root / "h" / "exchange" / "movements.json").write_text("{}")  # an account, not a wallet
     from bip322audit.datadir import holders, wallets
 
     assert wallets() == ["cold", "watch"] and holders() == ["h"]

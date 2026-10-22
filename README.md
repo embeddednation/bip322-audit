@@ -224,7 +224,7 @@ Inside, one directory per holder, and one per wallet under it: a directory
 under a holder is a wallet from the moment it exists (`mkdir company/cold`
 adds one), so a statement knows the holder's wallets before any proof is
 taken; the only directories under a holder that are not wallets are
-`statements/` and an account, marked by its `ledger.json` (bip322-report's).
+`statements/` and an account, marked by its `movements.json` (bip322-report's).
 A wallet's directory holds its snapshots and its history, nothing else:
 
 ```

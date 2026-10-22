@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.24.0 (2026-10-22)
+
+The tree is the declaration. A directory under a holder is a wallet from the
+moment it exists: `init -w KEY/NAME` makes `KEY/NAME/`, `mkdir` adds another,
+and a statement knows the holder's wallets before any snapshot is taken. The
+only directories under a holder that are not wallets are `statements/` and an
+account, marked by its `ledger.json` (`LEDGER_FILE`; bip322-report's record of
+a custodial account). Every top-level directory is a holder. The signed
+message is the holder's name and the stamp's date, `Proof of control, Company
+AB, 2026-12-31`, the name the statement's header carries, from `name` in
+`[holders.KEY]` (else the key); `--text` gives another. The keys `wallet` and
+`text` of `bip322.toml` are no longer read: the wallet is `-w`, the directory
+the command runs in, the tree's one wallet, or the node's one loaded wallet;
+a file that still has either key is told so (`Config.stale`).
+
 ## 0.23.0 (2026-10-21)
 
 The stamp block is chosen, and it is the block the coins are listed at.

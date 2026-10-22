@@ -217,11 +217,15 @@ place; `--dir DIR` or `BIP322_DIR` name it from elsewhere.
 
 ```sh
 mkdir ~/bip322 && cd ~/bip322
-bip322 init -w company/treasury       # -> bip322.toml: holder = "company", wallet = "treasury", every other key a comment
+bip322 init -w company/treasury       # -> bip322.toml with holder = "company", and the directories company/treasury/
 ```
 
-Inside, one directory per holder, and one per wallet under it; a wallet's
-directory holds its snapshots and nothing else:
+Inside, one directory per holder, and one per wallet under it: a directory
+under a holder is a wallet from the moment it exists (`mkdir company/cold`
+adds one), so a statement knows the holder's wallets before any proof is
+taken; the only directories under a holder that are not wallets are
+`statements/` and an account, marked by its `ledger.json` (bip322-report's).
+A wallet's directory holds its snapshots and its history, nothing else:
 
 ```
 ~/bip322/
@@ -246,8 +250,8 @@ name (or the one `node` names in its `[wallets.NAME]` table of
 A wallet not in the tree yet is made under the holder `-w KEY/NAME` names,
 else the holder whose directory the command runs in, else `holder` in
 `bip322.toml`, else the tree's one holder. Without `-w`, the wallet directory
-the command runs in names the wallet, else `wallet` in `bip322.toml`, else
-the node's one loaded wallet does; inside a snapshot's directory, `finalize`
+the command runs in names the wallet, else the tree's one wallet, else the
+node's one loaded wallet does; inside a snapshot's directory, `finalize`
 and `verify` mean that snapshot. The snapshots hold the PSBTs, which carry
 the wallet's xpubs: they stay with the holder.
 
@@ -257,28 +261,31 @@ In `bip322.toml`, top-level keys are defaults for every wallet, a
 
 ```toml
 holder = "company"
-wallet = "treasury"
-text = "Proof of control {date}"
 cli = "bitcoin-cli -rpcconnect=10.0.0.5"
 
 [holders.company]
-name = "Company AB"
-text = "Proof of control, Company AB (556123-4567), {date}"
+name = "Company AB (556123-4567)"
 
 [wallets.treasury]
 node = "treasury-2of3-main"
 ```
 
 A wallet's holder is the directory it is under; a wallet not in the tree yet
-takes the holder it would be made under.
+takes the holder it would be made under. The holder's `name` is what the
+statements put in their header and what the signed message names: the
+message is `Proof of control, Company AB (556123-4567), 2026-12-31` over the
+stamp line, so the name on the statement and the name in the proof are one
+(`--text` for another message; a name must be printable ASCII for the
+signing devices).
 
 `init` writes the file with every key the tools read as a comment to switch
-on, and `-w KEY/NAME` switches `holder = KEY`, `wallet = NAME` and their
-tables on. An existing file is left alone.
+on, and `-w KEY/NAME` switches `holder = KEY` and the two tables on. An
+existing file is left alone.
 
-Keys this package reads: `holder`, `wallet`, `cli`, `timeout`, `text`, `node`
-per wallet, and `name` per holder; bip322-report reads more.
-`bip322 audit snapshot --text` beats them all for one snapshot.
+Keys this package reads: `holder`, `cli`, `timeout`, `node` per wallet, and
+`name` per holder; bip322-report reads more. The keys `wallet` and `text`
+of earlier versions are no longer read, and a file that still has them is
+told.
 
 Over the years the snapshots accumulate, and their proofs files are what
 `--skip-proven` reads:
@@ -286,8 +293,8 @@ Over the years the snapshots accumulate, and their proofs files are what
 ```sh
 bip322 audit snapshot --skip-proven
 #   -> <date>-<height>/ with only the outputs no earlier snapshot of the wallet proves (new change, new deposits)
-bip322 audit snapshot --text "Proof of control, audit FY2026, {date}"
-#   -> every output the wallet holds, after the period's end, under a message that names the audit
+bip322 audit snapshot --before 2027-01-01
+#   -> every output the wallet holds at the last block of 2026, under the holder's name and that block's date
 ```
 
 The block stamp in every message is the timestamp an audit needs: it shows

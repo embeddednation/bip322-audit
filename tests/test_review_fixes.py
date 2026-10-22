@@ -475,7 +475,8 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     other = tmp_path / "other"  # a directory given, made for it, with the wallet switched on
     assert audit_cli.main(["init", "other", "-w", "co/my wallet"]) == 0 and capsys.readouterr().out.strip() == str(other / "bip322.toml")
     config = Config.load(other)
-    assert config.get("wallet") == "my wallet" and set(config.wallets) == {"my wallet"} and config.node_wallet("my wallet") == "my wallet"
+    assert config.get("wallet") is None and set(config.wallets) == {"my wallet"} and config.node_wallet("my wallet") == "my wallet"
+    assert (other / "co" / "my wallet").is_dir()  # the holder's directory and the wallet's: a directory is a wallet from the start
     assert config.default_holder == "co" and config.holders == {"co": {}} and config.holder_name("co") == "co"
     assert audit_cli.main(["init", "x", "-w", "../x"]) == 2 and "not usable as a directory name" in capsys.readouterr().err
     assert audit_cli.main(["init", "x", "-w", "x"]) == 2 and "a wallet lives under a holder: -w KEY/x" in capsys.readouterr().err
@@ -487,10 +488,8 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     switched_on = re.sub(r"^# (?=[a-z]+ = |\[)", "", written, flags=re.M)
     assert set(tomllib.loads(switched_on)) == {
         "holder",
-        "wallet",
         "cli",
         "timeout",
-        "text",
         "dust",
         "theme",
         "heading",
@@ -505,7 +504,7 @@ def test_init_makes_a_directory_the_data_directory_and_commands_below_find_it(tm
     below.mkdir(parents=True)
     monkeypatch.chdir(below)
     assert data_dir() == tmp_path and wallet_of_cwd() == "treasury" and Config.load().path == tmp_path / "bip322.toml"
-    assert holder_of_cwd() == "company" and wallets() == []  # an empty directory is no wallet yet: its first snapshot makes it one
+    assert holder_of_cwd() == "company" and wallets() == ["treasury"]  # a directory under a holder is a wallet from the start
     assert audit_cli.main(["init"]) == 2 and "inside the bip322 directory" in capsys.readouterr().err
     assert audit_cli.main(["verify"]) == 2 and f"no finalized snapshot under {below.parent}" in capsys.readouterr().err
     (below / "snapshot.json").write_text("{}")
@@ -668,12 +667,15 @@ def test_holders_above_wallets(tmp_path, monkeypatch):
     (tmp_path / "company" / "statements").mkdir()
     (tmp_path / "jonas" / "personal").mkdir(parents=True)
     (tmp_path / "jonas" / "personal" / "history.json").write_text("{}")  # a history alone marks a wallet too
-    (tmp_path / "notes").mkdir()  # a directory written there for something else: neither holder nor wallet
-    (tmp_path / "company" / "out").mkdir()
-    (tmp_path / "company" / "out" / "x.txt").write_text("")
+    (tmp_path / "notes").mkdir()  # a directory holding no directory declares nothing: not a holder
+    (tmp_path / "company" / "exchange").mkdir()
+    (tmp_path / "company" / "exchange" / "ledger.json").write_text("{}")  # an account, not a wallet
     (tmp_path / "company" / "treasury" / "statements" / "2025").mkdir(parents=True)  # the wallet's statements of earlier versions: not read
     assert holders() == ["company", "jonas"] and wallets() == ["personal", "treasury"]
     assert wallet_dirs() == {"personal": tmp_path / "jonas" / "personal", "treasury": tmp_path / "company" / "treasury"}
+    (tmp_path / "company" / "cold").mkdir()  # a directory under a holder is a wallet from the moment it exists
+    assert wallets() == ["cold", "personal", "treasury"]
+    shutil.rmtree(tmp_path / "company" / "cold")
     assert holder_of_wallet("treasury") == "company" and holder_of_wallet("new") is None
     assert wallet_dir("personal") == tmp_path / "jonas" / "personal"  # wherever it is
     assert holder_statements_dir("company") == tmp_path / "company" / "statements"
@@ -764,18 +766,40 @@ def test_settings_per_holder(tmp_path, monkeypatch):
     assert holder_of(None) == "jonas" and config.get("text", "new") == "Proof {date}"
 
 
-def test_a_holders_text_signs_its_wallets_snapshots(tmp_path, wallet, funded, monkeypatch, capsys):
-    """bip322.toml: text under [holders.h] is the message of a snapshot of a wallet under h/, unless --text says otherwise."""
+def test_the_holders_name_is_the_message(tmp_path, wallet, funded, monkeypatch, capsys):
+    """The signed message is "Proof of control, <the holder's name>, <date>": the name the statement's header carries, from
+    name in [holders.KEY], else the key; --text for another.  The keys wallet and text of earlier versions are noted, not read."""
     fake = FakeCli(wallet, funded, tip=1000)
     monkeypatch.setattr(audit_cli, "BitcoinCli", lambda command: fake)
     root = tmp_path / "bip322"
-    (root / "bip322.toml").write_text('holder = "h"\ntext = "Proof {date}"\n[holders.h]\ntext = "Company AB (556123-4567) {date}"\n')
+    (root / "bip322.toml").write_text(
+        'holder = "h"\nwallet = "watch"\ntext = "Proof {date}"\n[holders.h]\nname = "Company AB (556123-4567)"\n'
+    )
     assert audit_cli.main(["snapshot", "-w", "watch"]) == 0
-    directory = Path(capsys.readouterr().out.strip())
+    out, err = capsys.readouterr()
+    directory = Path(out.strip())
     assert directory.parent == root / "h" / "watch"
-    assert (directory / "message.txt").read_text().startswith("Company AB (556123-4567) 20")
+    assert (directory / "message.txt").read_text().startswith("Company AB (556123-4567)".join(["Proof of control, ", ", 2023-11-21\n"]))
+    assert (
+        "note: wallet in bip322.toml is no longer read: the wallet is -w NAME" in err
+        and "note: text in bip322.toml is no longer read" in err
+    )
     assert audit_cli.main(["snapshot", "-w", "watch", "--text", "Audit {date}", "--force"]) == 0
     assert (Path(capsys.readouterr().out.strip()) / "message.txt").read_text().startswith("Audit 20")
+    (root / "bip322.toml").write_text('holder = "h"\n')  # no name: the key is the name
+    assert audit_cli.main(["snapshot", "-w", "watch"]) == 0
+    out, err = capsys.readouterr()
+    assert (Path(out.strip()) / "message.txt").read_text().startswith("Proof of control, h, 2023-11-21\n") and "note:" not in err
+    # a directory under the holder is a wallet from the moment it exists: the tree's one wallet needs no naming
+    assert audit_cli.main(["snapshot"]) == 0 and Path(capsys.readouterr().out.strip()).parent == root / "h" / "watch"
+    (root / "h" / "cold").mkdir()
+    assert audit_cli.main(["snapshot"]) == 0  # two wallets now: the node's one loaded wallet, watch, names the directory
+    assert Path(capsys.readouterr().out.strip()).parent == root / "h" / "watch"
+    (root / "h" / "exchange").mkdir()
+    (root / "h" / "exchange" / "ledger.json").write_text("{}")  # an account, not a wallet
+    from bip322audit.datadir import holders, wallets
+
+    assert wallets() == ["cold", "watch"] and holders() == ["h"]
 
 
 def test_checksigners_takes_the_snapshot_as_finalize_does(bundle, signer_expressions, tmp_path, monkeypatch, capsys):

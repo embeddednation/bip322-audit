@@ -7,9 +7,10 @@ not show every listed output held at the stamp block.
 
 ``init`` makes a directory the data directory, and a command run in it or below finds
 it (``--dir`` or ``BIP322_DIR`` name one from elsewhere).  Inside, one directory per
-holder and one per wallet under it.  ``-w`` names the wallet (``KEY/NAME`` the holder a
-new one is made under), else the wallet directory the command runs in does, else
-``bip322.toml``, else the node's one loaded wallet is it.  ``-o`` writes elsewhere.
+holder and one per wallet under it, a directory being a wallet from the moment it
+exists.  ``-w`` names the wallet (``KEY/NAME`` the holder a new one is made under), else
+the wallet directory the command runs in does, else the tree's one wallet is it, else
+the node's one loaded wallet.  ``-o`` writes elsewhere.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from .audit import EXIT_CODES, AuditError, finalize_snapshot, format_report, loa
 from .datadir import (
     Config,
     ConfigError,
+    holder_of,
     name_wallet,
     only_wallet,
     proofs_file_in,
@@ -63,7 +65,7 @@ from .snapshot import (
 )
 from .stamp import choose_stamp, parse_when
 
-DEFAULT_TEMPLATE = "Proof of control {date}"
+DEFAULT_TEMPLATE = "Proof of control, {holder}, {date}"  # {holder}: the holder's name, as the statement's header has it
 EXIT_HELP = "Exit codes: 0 done, 2 could not run (bad input, a file or the node not reachable)."
 
 
@@ -74,15 +76,19 @@ def _opt(args, name: str):
 
 
 def _wallet_name(args, config: Config) -> str | None:
-    """The wallet as named by the owner: ``-w``, else the wallet directory the command runs in, else ``wallet`` in bip322.toml; None when none says."""
+    """The wallet as named by the owner: ``-w``, else the wallet directory the command runs in; None when neither says."""
     given = _opt(args, "wallet")
     if given is not None:
         return name_wallet(str(given))
-    here = wallet_of_cwd()
-    if here is not None:
-        return here
-    named = config.get("wallet")
-    return str(named) if named is not None else None
+    return wallet_of_cwd()
+
+
+def _template(args, config: Config, wallet: str | None) -> str:
+    """The message: ``--text``, else "Proof of control, <the holder's name>, {date}", the name the statement's header carries."""
+    if args.text is not None:
+        return str(args.text)
+    name = config.holder_name(holder_of(wallet))
+    return DEFAULT_TEMPLATE.replace("{holder}", name) if name else "Proof of control {date}"
 
 
 def _cli(args, config: Config, *, node_wallet: str | None = None, wallet: str | None = None) -> BitcoinCli:
@@ -134,7 +140,7 @@ def _snapshot_destination(output: str | None, force: bool, parent: Path | None, 
             _check_may_rewrite(directory, force)
         return directory
     if parent is None:
-        raise CLIError("no wallet to file the snapshot under: name it with -w NAME (or wallet = NAME in bip322.toml), or give -o DIR")
+        raise CLIError("no wallet to file the snapshot under: name it with -w NAME, or run in the wallet's directory, or give -o DIR")
     directory, n = parent / name, 1
     while directory.exists():
         n += 1
@@ -158,7 +164,7 @@ def _proven(wallet: str | None, skip_proven: bool) -> set[str] | None:
     if not skip_proven:
         return None
     if wallet is None:
-        raise CLIError("--skip-proven reads the wallet's snapshots: name the wallet with -w NAME (or wallet = NAME in bip322.toml)")
+        raise CLIError("--skip-proven reads the wallet's snapshots: name the wallet with -w NAME, or run in its directory")
     unreadable: list = []
     proven = proven_addresses([wallet_dir(wallet)], skipped=unreadable)
     for path, reason in unreadable:
@@ -206,6 +212,9 @@ def _new_snapshot(args, *, source: str, addresses: list[str] | None, skip_proven
     """Take the snapshot, write it, say what was written: all that ``snapshot`` and ``prove`` share."""
     config = Config.load()
     name = _wallet_name(args, config)
+    if name is None and not args.output:
+        with contextlib.suppress(ConfigError):
+            name = only_wallet()  # the tree's one wallet needs no naming
     cli = _cli(args, config, node_wallet=config.node_wallet(name) if name is not None else None, wallet=name)
     if name is None and not args.output:  # the node's one loaded wallet names the directory; a UTXO-set scan has none to offer
         with contextlib.suppress(RpcError, KeyError, TypeError):
@@ -217,7 +226,7 @@ def _new_snapshot(args, *, source: str, addresses: list[str] | None, skip_proven
     snapshot, psbts = take_snapshot(
         cli,
         wallet,
-        args.text if args.text is not None else str(config.get("text", name, DEFAULT_TEMPLATE)),
+        _template(args, config, name),
         **_block_choice(args),
         source=source,
         strict_message=not args.allow_any_message,
@@ -404,7 +413,7 @@ def _add_global_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="NAME",
         help="the wallet: its directory NAME in the data directory, and the node wallet of that name (or the one its [wallets.NAME] "
-        "table names as node). Default: the wallet directory the command runs in, else wallet in bip322.toml, else the node's one "
+        "table names as node). Default: the wallet directory the command runs in, else the tree's one wallet, else the node's one "
         "loaded wallet. May also follow the command.",
     )
     parser.add_argument(
@@ -461,8 +470,9 @@ def _add_init_parser(sub) -> None:
         "init",
         help="make a directory the data directory: bip322.toml, with every key shown, written into it",
         description="Make DIR (default: the current directory) the data directory by writing bip322.toml into it, with every key the "
-        "tools read as comments to switch on; -w KEY/NAME switches holder = KEY, wallet = NAME and their tables on (the holder's "
-        "directory holds the wallet's). The directory is created if need be; an existing bip322.toml is left alone. From then on a "
+        "tools read as comments to switch on; -w KEY/NAME switches holder = KEY and the two tables on, and makes the directories "
+        "KEY/NAME/, the holder's and the first wallet's (mkdir adds another wallet). The directory is created if need be; an existing "
+        "bip322.toml is left alone. From then on a "
         "command run in the directory or below finds it, as git finds its repository. bip322 init runs this too.",
         epilog=EXIT_HELP,
     )
@@ -514,7 +524,7 @@ def _add_snapshot_parser(sub) -> None:
         p,
         descriptor="use this descriptor (a file or the text) instead of the node wallet's own; it must be one of the wallet's descriptors",
         text=f"message template; {{date}} {{time}} {{height}} {{hash}} are filled from the stamp block "
-        f"(default: text in bip322.toml, else '{DEFAULT_TEMPLATE}')",
+        f"(default: '{DEFAULT_TEMPLATE}', the holder's name as name in [holders.KEY], else its key)",
     )
     _add_block_args(p, depth=None)
     p.add_argument(
@@ -580,7 +590,7 @@ def _add_prove_parser(sub) -> None:
     _add_wallet_and_message_args(
         p,
         descriptor="use this descriptor instead of the node wallet's own",
-        text=f"message template (default: text in bip322.toml, else '{DEFAULT_TEMPLATE}')",
+        text=f"message template (default: '{DEFAULT_TEMPLATE}', the holder's name as name in [holders.KEY], else its key)",
     )
     _add_block_args(p, depth=DEFAULT_DEPTH)
     _add_psbt_args(p, max_index="derivation range to search per branch (default %(default)s)")
@@ -723,10 +733,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _note_stale_keys() -> None:
+    """A bip322.toml that still has keys earlier versions read is told so, once per command, on stderr."""
+    with contextlib.suppress(ConfigError):
+        for line in Config.load().stale():
+            print(f"note: {line}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     use_data_dir(_opt(args, "dir"))
     try:
+        _note_stale_keys()
         return args.func(args)
     except (CLIError, ConfigError, BIP322Error, RpcError, AuditError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)

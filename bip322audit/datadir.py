@@ -11,20 +11,25 @@ it, and a command run in it or anywhere below finds it, as git finds its reposit
       <holder>/<wallet>/<date>-<height>/    one round of proofs: snapshot.json, message.txt, to_sign/, signed/,
                                             and once finalized <wallet>-<date>-<height>-proofs.json
       <holder>/<wallet>/history.json        the wallet's history as bip322-report last read it from the node
+      <holder>/<account>/ledger.json        a custodial account's own record of its deposits and withdrawals (bip322-report)
 
-A wallet's directory holds its snapshots and its history, nothing else; a
-holder's holds its wallets and its ``statements/``.  A directory is named for
-its place: the tree supplies the holder, the wallet and the kind, so the names
-stay bare.  A wallet's name is unique in the tree, so ``-w NAME`` finds it
-under whichever holder it is; a new wallet is made under ``-w KEY/NAME``'s
-holder, else the holder of the current directory, else ``holder`` in
-``bip322.toml``, else the tree's one holder.  A file that leaves the tree, a
-proofs file or a statement's file, is named for its life,
-``<wallet>-<when>-<kind>``, and keeps that one name at home, in a statement
-and at the auditor's.  Inside a wallet's directory that wallet is the one
-meant (:func:`wallet_of_cwd`).  Earlier versions kept a wallet's snapshots
-under ``<wallet>/snapshots/``: such a directory is refused with the command
-that moves them up.
+The tree is the declaration: a top-level directory is a holder, and a
+directory under it is one of the holder's wallets, from the moment it exists
+(``bip322 init -w KEY/NAME`` makes the first, ``mkdir`` makes another), so a
+statement knows its wallets before any proof is taken.  Two kinds of
+directory under a holder are not wallets: ``statements/``, and an account,
+marked by its ``ledger.json``.  A wallet's directory holds its snapshots and
+its history, nothing else.  A directory is named for its place: the tree
+supplies the holder, the wallet and the kind, so the names stay bare.  A
+wallet's name is unique in the tree, so ``-w NAME`` finds it under whichever
+holder it is; a new wallet is made under ``-w KEY/NAME``'s holder, else the
+holder of the current directory, else ``holder`` in ``bip322.toml``, else
+the tree's one holder.  A file that leaves the tree, a proofs file or a
+statement's file, is named for its life, ``<wallet>-<when>-<kind>``, and
+keeps that one name at home, in a statement and at the auditor's.  Inside a
+wallet's directory that wallet is the one meant (:func:`wallet_of_cwd`).
+Earlier versions kept a wallet's snapshots under ``<wallet>/snapshots/``:
+such a directory is refused with the command that moves them up.
 
 ``bip322.toml`` holds defaults for every wallet at the top level, for a
 holder's wallets in its ``[holders.KEY]`` table and for one wallet in its
@@ -32,17 +37,20 @@ holder's wallets in its ``[holders.KEY]`` table and for one wallet in its
 (:meth:`Config.get`).  ``init`` writes it with every key shown (:func:`write_config`)::
 
     holder = "company"            # the default holder: a new -w NAME is made in its directory
-    wallet = "treasury"           # the default -w
     cli = "bitcoin-cli"
-    text = "Proof of control {date}"
     dust = 1000
 
     [holders.company]
-    name = "Company AB"           # the statements' header (default: the key)
-    text = "Proof of control, Company AB, {date}"   # for the holder's wallets
+    name = "Company AB"           # the statements' header, and the signed message: "Proof of control, Company AB, <date>"
 
     [wallets.treasury]
     node = "treasury-2of3-main"   # the node wallet, when its name is not the directory's
+
+The keys ``wallet`` (a default ``-w``) and ``text`` (a message template) of
+earlier versions are no longer read: the wallet is ``-w``, the directory the
+command runs in, or the tree's one; the message is the holder's name and
+the date (``--text`` for another), so that the name on the statement and
+the name in the signed message are one.  A file that still has them is told.
 """
 
 from __future__ import annotations
@@ -55,6 +63,8 @@ from pathlib import Path
 
 __all__ = [
     "HISTORY_FILE",
+    "LEDGER_FILE",
+    "STALE_KEYS",
     "Config",
     "ConfigError",
     "data_dir",
@@ -86,6 +96,11 @@ _TABLES = ("holders", "wallets", "addresses")  # the tables of bip322.toml: not 
 RESERVED = ("snapshots", "statements")  # statements/ is the holder's, snapshots/ was the wallet's: no wallet or holder takes them
 HISTORY_FILE = "history.json"  # in a wallet's directory: its history as bip322-report last read it from the node
 SNAPSHOT_FILE = "snapshot.json"  # in a snapshot's directory: what marks one
+LEDGER_FILE = "ledger.json"  # in an account's directory: what marks one (a custodial account's record, read by bip322-report)
+STALE_KEYS = {
+    "wallet": "the wallet is -w NAME, the directory the command runs in, or the tree's one",
+    "text": "the message is the holder's name and the date (--text for another)",
+}
 _NAME = re.compile(r"[A-Za-z0-9_.-]+")
 
 
@@ -180,10 +195,20 @@ class Config:
         return str(value) if value is not None else None
 
     def holder_name(self, key: str | None) -> str | None:
-        """The holder's name as the statements put it: ``name`` in its table, else the key itself."""
+        """The holder's name as the statements put it, and as the signed message names it: ``name`` in its table, else the key."""
         if key is None:
             return None
         return str(self.holders.get(key, {}).get("name", key))
+
+    def stale(self) -> list[str]:
+        """Keys of earlier versions that are no longer read, each with where it stands and what replaced it: for a note to the owner."""
+        found = []
+        for key, instead in STALE_KEYS.items():
+            places = ["bip322.toml"] if key in self.data else []
+            places += [f"[holders.{k}]" for k, t in self.holders.items() if isinstance(t, dict) and key in t]
+            places += [f"[wallets.{k}]" for k, t in self.wallets.items() if isinstance(t, dict) and key in t]
+            found += [f"{key} in {place} is no longer read: {instead}" for place in places]
+        return found
 
     @property
     def addresses(self) -> dict[str, str]:
@@ -261,10 +286,10 @@ def _is_snapshot_dir(path: Path) -> bool:
 
 
 def _is_wallet_dir(path: Path) -> bool:
-    """A wallet's directory: one with a snapshot or a history in it (or a ``snapshots/``, as earlier versions laid it out)."""
+    """A wallet's directory: any directory under a holder that is not reserved (``statements/``) and not an account (``ledger.json``)."""
     if not path.is_dir() or path.name.startswith(".") or path.name in RESERVED:
         return False
-    return (path / HISTORY_FILE).is_file() or (path / "snapshots").is_dir() or any(_is_snapshot_dir(p) for p in path.iterdir())
+    return not (path / LEDGER_FILE).is_file()
 
 
 def _check_layout(path: Path) -> None:
@@ -277,14 +302,19 @@ def _check_layout(path: Path) -> None:
 
 
 def holders() -> list[str]:
-    """The holders in the data directory: the top-level directories holding a wallet directory or a ``statements/``; none outside a tree."""
+    """The holders in the data directory: its top-level directories that hold a directory (a wallet, an account or
+    ``statements/``); one holding none declares nothing yet, and a data directory of its own is another tree.  None outside a tree."""
     root = find_data_dir()
     if root is None or not root.is_dir():
         return []
     return sorted(
         p.name
         for p in root.iterdir()
-        if p.is_dir() and not p.name.startswith(".") and ((p / "statements").is_dir() or any(_is_wallet_dir(q) for q in p.iterdir()))
+        if p.is_dir()
+        and not p.name.startswith(".")
+        and p.name not in RESERVED
+        and not (p / CONFIG_FILE).is_file()
+        and any(q.is_dir() for q in p.iterdir())
     )
 
 
@@ -460,7 +490,6 @@ _SAMPLE_HEAD = """\
 _SAMPLE_KEYS = (
     ('cli = "bitcoin-cli"', 'e.g. "bitcoin-cli -rpcconnect=10.0.0.5" or "bitcoin-cli -signet"'),
     ("timeout = 600", "seconds to wait for a node call"),
-    ('text = "Proof of control {date}"', "the message; {date} {time} {height} {hash} of the stamp block"),
     None,
     ("dust = 1000", "satoshi; received outputs at or below this are left out of the statement"),
     ('theme = "journal"', "journal, paper, light or dark"),
@@ -479,28 +508,25 @@ def _key(name: str) -> str:
 
 
 def sample_config(holder: str | None = None, wallet: str | None = None) -> str:
-    """``bip322.toml`` with every key the tools read, ``[holders.KEY]`` and ``[addresses]``: ``holder``, ``wallet`` and their tables
-    switched on when given, else every line a comment."""
+    """``bip322.toml`` with every key the tools read, ``[holders.KEY]`` and ``[addresses]``: ``holder`` and its table, and the
+    wallet's table, switched on when given, else every line a comment."""
     key, holder_on = (holder, True) if holder is not None else ("company", False)
     names, on = ([wallet], True) if wallet is not None else (["treasury", "personal"], False)
     lines = [
         _SAMPLE_HEAD,
         _row(f"holder = {json.dumps(key)}", "the default holder: the directory a new -w NAME is made in", holder_on),
-        _row(f"wallet = {json.dumps(names[0])}", "the default -w: the wallet directory, and the node wallet of that name", on),
     ]
     lines += [_row(*item) if item else "" for item in _SAMPLE_KEYS]
     lines += [
         "",
         f"{'' if holder_on else '# '}[holders.{_key(key)}]".ljust(38) + "# the holder: bip322 report, one statement over its wallets",
-        _row('name = "Company AB"', "the statements' header (default: the key)"),
-        _row('text = "Proof of control, Company AB, {date}"', "a key given here beats the one above, for the holder's wallets"),
+        _row('name = "Company AB"', "the statements' header, and the signed message: Proof of control, Company AB, <date>"),
     ]
     for name in names:
         lines += [
             "",
             f"{'' if on else '# '}[wallets.{_key(name)}]",
             _row(f'node = "{name}-2of3-main"', "the node wallet, when its name is not the directory's"),
-            _row(f'text = "Proof of control, {name}, {{date}}"', "a key given here beats the one above, for this wallet"),
         ]
     lines += [
         "",
@@ -511,7 +537,8 @@ def sample_config(holder: str | None = None, wallet: str | None = None) -> str:
 
 
 def write_config(directory: Path, holder: str | None = None, wallet: str | None = None) -> Path:
-    """Make ``directory`` the data directory: write :func:`sample_config` as its ``bip322.toml``, creating the directory if need be.
+    """Make ``directory`` the data directory: write :func:`sample_config` as its ``bip322.toml``, creating the directory if need be,
+    and the holder's directory and the wallet's under it when they are named, since a directory is a wallet from the moment it exists.
 
     An existing file is left alone, and a directory inside a data directory already is refused.
     """
@@ -529,4 +556,6 @@ def write_config(directory: Path, holder: str | None = None, wallet: str | None 
     directory.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as f:
         f.write(sample_config(holder, wallet))
+    if holder is not None:
+        (directory / holder / wallet if wallet is not None else directory / holder).mkdir(parents=True, exist_ok=True)
     return path

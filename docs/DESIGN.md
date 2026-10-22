@@ -56,7 +56,13 @@ credentials are what is trusted and the tool holds none. The commands are
 * **One tree, named by the tools.** `<holder>/<wallet>/<date>-<height>/` under the
   directory `init` made holds each snapshot, and its `bip322.toml` marks the directory
   and holds the defaults; a command run below finds it, as git does; `-w` names the
-  wallet and the wallet names the rest, so the yearly commands take no paths.
+  wallet and the wallet names the rest, so the yearly commands take no paths. The
+  tree is the declaration: a directory under a holder is a wallet from the moment
+  it exists, so a statement knows its wallets before any proof is taken and can
+  ask for the snapshots it lacks; an account's directory is marked by its
+  `ledger.json`. The signed message is the holder's name and the stamp's date,
+  the name the statement's header carries, so what is signed and what is stated
+  cannot drift apart.
   A directory is named for its place (the tree supplies wallet and kind); a
   file that leaves the tree, the proofs file, is named for its life,
   `<wallet>-<date>-<height>-proofs.json`, and keeps that name beside a
